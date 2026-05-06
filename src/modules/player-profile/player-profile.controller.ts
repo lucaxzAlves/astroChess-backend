@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
 
 import { AppError } from '../../utils/AppError';
+import { AuthRequest } from '../auth/auth.types';
 import * as playerProfileService from './player-profile.service';
 
 const getAuthenticatedUserId = (request: Request): string => {
-  const user = request.user;
+  const authRequest = request as AuthRequest;
+  const user = authRequest.user;
 
   if (!user) {
     throw new AppError('Unauthorized', 401);

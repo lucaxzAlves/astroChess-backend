@@ -1,9 +1,10 @@
-import { NextFunction, Request, Response } from 'express';
+import { RequestHandler } from 'express';
 import jwt from 'jsonwebtoken';
 
 import { env } from '../../config/env';
 import type { UserRole } from '../../models/User';
 import { AppError } from '../../utils/AppError';
+import { AuthRequest } from './auth.types';
 
 type AuthJwtPayload = {
   sub: string;
@@ -31,7 +32,12 @@ const ensureJwtSecret = (): string => {
   return env.jwtSecret;
 };
 
-export const authenticate = (request: Request, _response: Response, next: NextFunction): void => {
+export const authenticate: RequestHandler = (
+  request,
+  _response,
+  next,
+): void => {
+  const authRequest = request as AuthRequest;
   const authorizationHeader = request.headers.authorization;
 
   if (!authorizationHeader?.startsWith('Bearer ')) {
@@ -51,7 +57,7 @@ export const authenticate = (request: Request, _response: Response, next: NextFu
       throw new AppError('Unauthorized', 401);
     }
 
-    request.user = {
+    authRequest.user = {
       userId: decoded.sub,
       role: decoded.role,
     };

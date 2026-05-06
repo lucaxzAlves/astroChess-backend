@@ -1,3 +1,5 @@
+import { Request } from 'express';
+
 import { UserRole } from '../../models/User';
 
 export type RegisterInput = {
@@ -21,6 +23,19 @@ export type AuthUserResponse = {
 export type AuthResponse = {
   token: string;
   user: AuthUserResponse;
+};
+
+export type AuthUser = {
+  userId: string;
+  role: UserRole;
+};
+
+export type AuthRequest = Request & {
+  user?: AuthUser;
+};
+
+export type RequiredAuthRequest = Request & {
+  user: AuthUser;
 };
 
 export type JwtPayload = {
