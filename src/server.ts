@@ -4,6 +4,7 @@ import { env } from './config/env';
 
 const bootstrap = async (): Promise<void> => {
   try {
+    console.log('App initialized');
     await connectDatabase();
 
     app.listen(env.port, () => {
