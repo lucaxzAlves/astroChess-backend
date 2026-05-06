@@ -30,7 +30,7 @@ export const authenticate = (request: Request, _response: Response, next: NextFu
     const decoded = jwt.verify(token, ensureJwtSecret()) as JwtPayload;
 
     request.user = {
-      id: decoded.sub,
+      userId: decoded.sub,
       role: decoded.role,
     };
 

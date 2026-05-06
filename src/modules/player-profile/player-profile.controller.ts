@@ -4,11 +4,11 @@ import { AppError } from '../../utils/AppError';
 import * as playerProfileService from './player-profile.service';
 
 const getAuthenticatedUserId = (request: Request): string => {
-  if (!request.user?.id) {
+  if (!request.user?.userId) {
     throw new AppError('Unauthorized', 401);
   }
 
-  return request.user.id;
+  return request.user.userId;
 };
 
 export const getMyPlayerProfile = async (
