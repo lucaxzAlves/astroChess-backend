@@ -44,5 +44,3 @@ app.use(
 app.use(routes);
 
 app.use(errorMiddleware);
-
-export default app;

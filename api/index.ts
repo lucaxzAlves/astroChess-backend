@@ -1,3 +1,7 @@
-import app from '../src/app';
+import { createServer } from 'node:http';
 
-export default app;
+import { app } from '../src/app';
+
+const server = createServer(app);
+
+export default server;
