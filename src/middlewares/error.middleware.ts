@@ -13,6 +13,8 @@ export const errorMiddleware = (
   response: Response,
   _next: NextFunction,
 ): Response => {
+  console.error('[ERROR]', error);
+
   const statusCode = error.statusCode ?? error.status ?? 500;
   const message =
     statusCode === 500 && !error.statusCode
@@ -20,7 +22,10 @@ export const errorMiddleware = (
       : error.message || 'Internal server error';
 
   return response.status(statusCode).json({
-    message,
-    ...(error.details ? { details: error.details } : {}),
+    success: false,
+    error: message,
+    details:
+      error.details ??
+      (error instanceof Error ? error.message : typeof error === 'string' ? error : undefined),
   });
 };
