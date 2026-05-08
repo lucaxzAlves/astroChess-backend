@@ -2,6 +2,7 @@ import type { StockfishAnalysis } from '../engine/stockfish.types';
 import type { AiGameReviewResult } from '../modules/ai-review/ai-review.types';
 
 export type PlayerColor = 'white' | 'black';
+export type PlayerTarget = PlayerColor;
 export type GamePhase = 'opening' | 'middlegame' | 'endgame' | 'unknown';
 export type PositionContext = 'winning' | 'better' | 'equal' | 'worse' | 'lost';
 export type MoveClassification =
@@ -39,6 +40,7 @@ export type ParsedMove = {
 export type ParsedGame = {
   id?: string;
   pgn: string;
+  playerTarget?: PlayerTarget;
   metadata?: GameMetadata;
   headers: Record<string, string>;
   moves: ParsedMove[];

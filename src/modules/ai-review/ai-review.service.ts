@@ -58,8 +58,10 @@ const ensureWebhookConfig = (): string => {
 const buildPayload = (input: AiGameReviewInput): AiReviewWebhookPayload => {
   return {
     type: 'GAME_REVIEW_REQUEST',
+    analysisType: 'single_game',
     game: {
       id: input.gameId,
+      playerTarget: input.playerTarget,
       metadata: input.metadata,
       originalPgn: input.originalPgn,
       annotatedPgn: input.annotatedPgn,

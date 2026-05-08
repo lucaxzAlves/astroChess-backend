@@ -1,11 +1,12 @@
 import { Chess } from 'chess.js';
 
 import { AppError } from '../utils/AppError';
-import { GameMetadata, ParsedGame, ParsedMove, PlayerColor } from './chess.types';
+import { GameMetadata, ParsedGame, ParsedMove, PlayerColor, PlayerTarget } from './chess.types';
 
 type PgnGameInput = {
   id?: string;
   pgn: string;
+  playerTarget?: PlayerTarget;
   metadata?: GameMetadata;
 };
 
@@ -66,6 +67,7 @@ export const parsePgnGame = (game: PgnGameInput, index: number): ParsedGame => {
   return {
     id: game.id,
     pgn: game.pgn,
+    playerTarget: game.playerTarget,
     metadata: game.metadata,
     headers: chess.getHeaders(),
     moves,

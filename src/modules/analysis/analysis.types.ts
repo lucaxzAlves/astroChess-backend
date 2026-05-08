@@ -1,8 +1,9 @@
-import { GameAnalysis, GameAnalysisMetrics, GameMetadata } from '../../chess/chess.types';
+import { GameAnalysis, GameAnalysisMetrics, GameMetadata, PlayerTarget } from '../../chess/chess.types';
 
 export type AnalysisGameInput = {
   id?: string;
   pgn: string;
+  playerTarget?: PlayerTarget;
   metadata?: GameMetadata;
 };
 

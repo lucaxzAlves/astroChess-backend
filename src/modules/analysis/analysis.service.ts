@@ -7,6 +7,7 @@ import { analyzeParsedGame } from '../../chess/game-analyzer';
 import { AnalysisGameInput, AnalysisPgnResponse } from './analysis.types';
 
 const MAX_GAMES_PER_REQUEST = 30;
+const PLAYER_TARGETS = new Set(['white', 'black']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -45,6 +46,17 @@ const validateGames = (body: unknown): AnalysisGameInput[] => {
       });
     }
 
+    if (
+      game.playerTarget !== undefined &&
+      (typeof game.playerTarget !== 'string' || !PLAYER_TARGETS.has(game.playerTarget))
+    ) {
+      throw new AppError(
+        `Game playerTarget at index ${index} must be either "white" or "black" when provided.`,
+        400,
+        { index },
+      );
+    }
+
     if (game.metadata !== undefined && !isRecord(game.metadata)) {
       throw new AppError(`Game metadata at index ${index} must be an object when provided.`, 400, {
         index,
@@ -54,6 +66,7 @@ const validateGames = (body: unknown): AnalysisGameInput[] => {
     return {
       id: game.id,
       pgn: game.pgn,
+      playerTarget: game.playerTarget,
       metadata: game.metadata,
     } as AnalysisGameInput;
   });
@@ -126,6 +139,7 @@ export const analyzePgnGames = async (body: unknown): Promise<AnalysisPgnRespons
             originalPgn: game.pgn,
             annotatedPgn: analysis.annotatedPgn,
             criticalMoments: analysis.criticalMoments,
+            playerTarget: game.playerTarget,
             metadata: game.metadata,
           });
         }
