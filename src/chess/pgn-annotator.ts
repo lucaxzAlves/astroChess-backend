@@ -2,7 +2,7 @@ import { Chess } from 'chess.js';
 
 import { AnalyzedMove, GameMetadata, NormalizedEvaluation, ParsedGame } from './chess.types';
 
-const HEADER_MAP: Record<keyof GameMetadata, string> = {
+const HEADER_MAP: Partial<Record<keyof GameMetadata, string>> = {
   white: 'White',
   black: 'Black',
   result: 'Result',

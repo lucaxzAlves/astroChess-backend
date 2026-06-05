@@ -9,7 +9,15 @@ import { asyncHandler } from './utils/async-handler';
 
 export const app = express();
 const isVercelMode = process.env.VERCEL === '1';
-const databaseBackedPaths = ['/auth', '/player-profile', '/tournaments'];
+const databaseBackedPaths = [
+  '/auth',
+  '/player-profile',
+  '/tournaments',
+  '/pattern-forge',
+  '/academy',
+  '/master-replay',
+  '/openings',
+];
 
 console.log('App initialized', {
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -30,7 +38,6 @@ app.get('/', (_request, response) =>
   response.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV ?? 'development',
   }),
 );
 app.use(

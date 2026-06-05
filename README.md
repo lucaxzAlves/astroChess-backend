@@ -88,7 +88,8 @@ curl -X POST http://localhost:3333/analysis/pgn \
 
 ## Scripts
 
-- `npm run dev`: inicia o servidor em desenvolvimento com reload via `tsx`.
+- `npm run dev`: inicia o servidor em desenvolvimento sem watcher.
+- `npm run dev:watch`: inicia o servidor em desenvolvimento com reload via `tsx`.
 - `npm run build`: compila TypeScript para JavaScript em `dist/`.
 - `npm start`: executa a versao compilada em `dist/server.js`.
 - `npm run lint`: executa ESLint nos arquivos TypeScript.

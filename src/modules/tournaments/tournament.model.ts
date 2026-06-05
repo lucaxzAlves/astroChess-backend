@@ -1,86 +1,164 @@
 import { Document, Model, Schema, model, models } from 'mongoose';
 
-import { TournamentSource, TournamentStatus, TournamentTimeControl } from './tournament.types';
+import {
+  CanonicalTournamentSource,
+  CanonicalTournamentStatus,
+  DateConfidence,
+  RatingType,
+  TournamentSystem,
+  TournamentTimeControl,
+} from './tournament.types';
 
 export type TournamentDocument = Document & {
-  title: string;
-  slug: string;
-  source: TournamentSource;
+  source: CanonicalTournamentSource;
+  sourceTournamentId?: string | null;
   sourceUrl: string;
+  title: string;
+  normalizedTitle: string;
+  description?: string | null;
+  status: CanonicalTournamentStatus;
+  timeControl: TournamentTimeControl;
+  startDate?: Date | null;
+  endDate?: Date | null;
+  dateText?: string | null;
+  dateConfidence: DateConfidence;
+  location: {
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+    venue?: string | null;
+    raw?: string | null;
+  };
+  organizer?: string | null;
+  arbiter?: string | null;
+  federation?: string | null;
+  playersCount?: number | null;
+  rounds?: number | null;
+  system: TournamentSystem;
+  category?: string | null;
+  ratingType: RatingType;
+  links: {
+    chessResults?: string | null;
+    cbx?: string | null;
+    official?: string | null;
+  };
+  metadata?: Record<string, unknown>;
+  parseWarnings: string[];
+  detailsScraped: boolean;
+  lastScrapedAt?: Date | null;
+  sourceLastUpdatedAt?: Date | null;
+  cacheExpiresAt?: Date | null;
+
+  // Legacy fields kept optional so older saved documents do not explode while reading.
+  slug?: string;
   sourceId?: string;
-  startDate?: Date;
-  endDate?: Date;
   rawDateText?: string;
   city?: string;
   state?: string;
-  country: string;
+  country?: string;
   locationRaw?: string;
-  timeControl: TournamentTimeControl;
   timeControlRaw?: string;
-  status: TournamentStatus;
-  organizer?: string;
-  ratingType?: string;
-  enrichment?: {
-    lastEnrichedAt?: Date;
-    status?: 'success' | 'failed' | 'skipped';
-    error?: string;
-  };
-  tags: string[];
-  normalizedText: string;
+  tags?: string[];
+  normalizedText?: string;
+  firstSeenAt?: Date;
+  lastSeenAt?: Date;
+  lastSyncedAt?: Date;
+  isActive?: boolean;
   raw?: {
     title?: string;
     htmlSnippet?: string;
     data?: unknown;
   };
-  firstSeenAt: Date;
-  lastSeenAt: Date;
-  lastSyncedAt: Date;
-  isActive: boolean;
 };
 
 const tournamentSchema = new Schema<TournamentDocument>(
   {
-    title: { type: String, required: true, trim: true },
-    slug: { type: String, required: true, trim: true },
-    source: { type: String, enum: ['CBX', 'CHESS_RESULTS'], required: true },
+    source: {
+      type: String,
+      enum: ['chess-results', 'cbx', 'manual', 'unknown'],
+      required: true,
+      index: true,
+    },
+    sourceTournamentId: { type: String, trim: true },
     sourceUrl: { type: String, required: true, trim: true },
+    title: { type: String, required: true, trim: true },
+    normalizedTitle: { type: String, required: true, trim: true, index: true },
+    description: { type: String, trim: true, default: null },
+    status: {
+      type: String,
+      enum: ['not_started', 'playing', 'finished', 'unknown'],
+      default: 'unknown',
+      index: true,
+    },
+    timeControl: {
+      type: String,
+      enum: ['classical', 'rapid', 'blitz', 'bullet', 'mixed', 'unknown'],
+      default: 'unknown',
+      index: true,
+    },
+    startDate: { type: Date, default: null, index: true },
+    endDate: { type: Date, default: null },
+    dateText: { type: String, trim: true, default: null },
+    dateConfidence: {
+      type: String,
+      enum: ['high', 'medium', 'low', 'unknown'],
+      default: 'unknown',
+    },
+    location: {
+      city: { type: String, trim: true, default: null, index: true },
+      state: { type: String, trim: true, uppercase: true, default: null, index: true },
+      country: { type: String, trim: true, default: 'BR' },
+      venue: { type: String, trim: true, default: null },
+      raw: { type: String, trim: true, default: null },
+    },
+    organizer: { type: String, trim: true, default: null },
+    arbiter: { type: String, trim: true, default: null },
+    federation: { type: String, trim: true, default: null },
+    playersCount: { type: Number, default: null },
+    rounds: { type: Number, default: null },
+    system: {
+      type: String,
+      enum: ['swiss', 'round_robin', 'knockout', 'unknown'],
+      default: 'unknown',
+    },
+    category: { type: String, trim: true, default: null },
+    ratingType: {
+      type: String,
+      enum: ['fide', 'national', 'unrated', 'unknown'],
+      default: 'unknown',
+    },
+    links: {
+      chessResults: { type: String, trim: true, default: null },
+      cbx: { type: String, trim: true, default: null },
+      official: { type: String, trim: true, default: null },
+    },
+    metadata: { type: Schema.Types.Mixed },
+    parseWarnings: { type: [String], default: [] },
+    detailsScraped: { type: Boolean, default: false },
+    lastScrapedAt: { type: Date, default: null, index: true },
+    sourceLastUpdatedAt: { type: Date, default: null },
+    cacheExpiresAt: { type: Date, default: null, index: true },
+
+    // Legacy field definitions.
+    slug: { type: String, trim: true },
     sourceId: { type: String, trim: true },
-    startDate: { type: Date },
-    endDate: { type: Date },
     rawDateText: { type: String, trim: true },
     city: { type: String, trim: true },
     state: { type: String, trim: true, uppercase: true },
     country: { type: String, default: 'BR' },
     locationRaw: { type: String, trim: true },
-    timeControl: {
-      type: String,
-      enum: ['classical', 'rapid', 'blitz', 'mixed', 'unknown'],
-      default: 'unknown',
-    },
     timeControlRaw: { type: String, trim: true },
-    status: {
-      type: String,
-      enum: ['upcoming', 'ongoing', 'finished', 'unknown'],
-      default: 'unknown',
-    },
-    organizer: { type: String, trim: true },
-    ratingType: { type: String, trim: true },
-    enrichment: {
-      lastEnrichedAt: { type: Date },
-      status: { type: String, enum: ['success', 'failed', 'skipped'] },
-      error: { type: String },
-    },
     tags: { type: [String], default: [] },
-    normalizedText: { type: String, required: true, index: true },
+    normalizedText: { type: String, index: true },
+    firstSeenAt: { type: Date },
+    lastSeenAt: { type: Date },
+    lastSyncedAt: { type: Date },
+    isActive: { type: Boolean, default: true },
     raw: {
       title: { type: String },
       htmlSnippet: { type: String },
       data: { type: Schema.Types.Mixed },
     },
-    firstSeenAt: { type: Date, required: true },
-    lastSeenAt: { type: Date, required: true },
-    lastSyncedAt: { type: Date, required: true },
-    isActive: { type: Boolean, default: true },
   },
   {
     timestamps: true,
@@ -88,19 +166,21 @@ const tournamentSchema = new Schema<TournamentDocument>(
 );
 
 tournamentSchema.index(
-  { source: 1, sourceId: 1 },
+  { source: 1, sourceTournamentId: 1 },
   {
     unique: true,
-    partialFilterExpression: { sourceId: { $type: 'string' } },
+    partialFilterExpression: { sourceTournamentId: { $type: 'string' } },
   },
 );
 tournamentSchema.index({ source: 1, sourceUrl: 1 }, { unique: true });
-tournamentSchema.index({ slug: 1 });
-tournamentSchema.index({ startDate: 1 });
-tournamentSchema.index({ state: 1 });
-tournamentSchema.index({ city: 1 });
-tournamentSchema.index({ timeControl: 1 });
+tournamentSchema.index({ normalizedTitle: 1 });
 tournamentSchema.index({ status: 1 });
+tournamentSchema.index({ timeControl: 1 });
+tournamentSchema.index({ startDate: 1 });
+tournamentSchema.index({ 'location.state': 1 });
+tournamentSchema.index({ 'location.city': 1 });
+tournamentSchema.index({ lastScrapedAt: 1 });
+tournamentSchema.index({ cacheExpiresAt: 1 });
 
 export const Tournament: Model<TournamentDocument> =
   models.Tournament ?? model<TournamentDocument>('Tournament', tournamentSchema);

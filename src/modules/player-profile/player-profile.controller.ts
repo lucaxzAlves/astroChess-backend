@@ -37,3 +37,24 @@ export const updateMyPlayerProfilePreferences = async (
 
   return response.status(200).json(profile);
 };
+
+export const updateMyChessComUsername = async (
+  request: Request,
+  response: Response,
+): Promise<Response> => {
+  const body = request.body as { username?: unknown };
+
+  if (typeof body.username !== 'string') {
+    throw new AppError('username must be a string.', 400);
+  }
+
+  const profile = await playerProfileService.updateChessComUsername(
+    getAuthenticatedUserId(request),
+    body.username,
+  );
+
+  return response.status(200).json({
+    message: 'Chess.com username saved successfully.',
+    chessCom: profile.identities?.chessCom ?? null,
+  });
+};

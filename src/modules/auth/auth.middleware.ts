@@ -32,12 +32,7 @@ const ensureJwtSecret = (): string => {
   return env.jwtSecret;
 };
 
-export const authenticate: RequestHandler = (
-  request,
-  _response,
-  next,
-): void => {
-  const authRequest = request as AuthRequest;
+const resolveAuthenticatedUser = (request: AuthRequest): void => {
   const authorizationHeader = request.headers.authorization;
 
   if (!authorizationHeader?.startsWith('Bearer ')) {
@@ -57,13 +52,47 @@ export const authenticate: RequestHandler = (
       throw new AppError('Unauthorized', 401);
     }
 
-    authRequest.user = {
+    request.user = {
       userId: decoded.sub,
       role: decoded.role,
     };
-
-    next();
   } catch {
     throw new AppError('Unauthorized', 401);
   }
+};
+
+export const authenticate: RequestHandler = (
+  request,
+  _response,
+  next,
+): void => {
+  resolveAuthenticatedUser(request as AuthRequest);
+  next();
+};
+
+export const authenticateOptional: RequestHandler = (request, _response, next): void => {
+  const authRequest = request as AuthRequest;
+  const authorizationHeader = request.headers.authorization;
+
+  if (!authorizationHeader?.startsWith('Bearer ')) {
+    next();
+    return;
+  }
+
+  resolveAuthenticatedUser(authRequest);
+  next();
+};
+
+export const requireAdmin: RequestHandler = (request, _response, next): void => {
+  const authRequest = request as AuthRequest;
+
+  if (!authRequest.user) {
+    throw new AppError('Unauthorized', 401);
+  }
+
+  if (authRequest.user.role !== 'admin') {
+    throw new AppError('Forbidden', 403);
+  }
+
+  next();
 };

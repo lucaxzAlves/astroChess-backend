@@ -4,9 +4,12 @@
   "description": "Backend Node.js com TypeScript para um SaaS de analise de partidas de xadrez.",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx src/server.ts",
+    "dev:watch": "tsx watch --exclude node_modules --exclude dist --exclude .git --exclude coverage src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "import:puzzles": "tsx src/modules/pattern-forge/scripts/import-puzzles.ts",
+    "test:classification": "tsx --test src/chess/move-classifier.test.ts",
     "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

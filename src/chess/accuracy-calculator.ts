@@ -8,7 +8,7 @@ import {
 } from './chess.types';
 import { evaluationFromPlayerPerspective, normalizedEvaluationToPawns } from './move-classifier';
 
-const SEVERE_MATE_LOSS = 6;
+const SEVERE_MATE_EXPECTED_LOSS = 1;
 
 const roundTo = (value: number, decimals: number): number => {
   return Number(value.toFixed(decimals));
@@ -17,13 +17,13 @@ const roundTo = (value: number, decimals: number): number => {
 const getFallbackEvalLoss = (classification: MoveClassification): number => {
   switch (classification) {
     case 'blunder':
-      return 4;
+      return 0.35;
     case 'miss':
-      return 2.2;
+      return 0.18;
     case 'mistake':
-      return 2;
+      return 0.14;
     case 'inaccuracy':
-      return 1;
+      return 0.08;
     default:
       return 0;
   }
@@ -58,21 +58,24 @@ const getMoveWeight = (move: AnalyzedMove): number => {
 };
 
 const getMoveAccuracy = (move: AnalyzedMove): number => {
-  const evalLoss =
-    move.evalLoss ??
+  const expectedLoss =
+    move.expectedPointsLoss ??
     (move.reasonTags.some((tag) => tag.includes('mate'))
-      ? SEVERE_MATE_LOSS
+      ? SEVERE_MATE_EXPECTED_LOSS
       : getFallbackEvalLoss(move.classification));
 
   if (move.reasonTags.some((tag) => tag.includes('mate')) && move.shouldAnnotate) {
     return move.classification === 'blunder' ? 5 : 10;
   }
 
-  if (evalLoss <= 0.05) {
+  if (expectedLoss <= 0.002) {
     return 100;
   }
 
-  const rawAccuracy = 100 * Math.exp(-0.75 * evalLoss);
+  const winPercentLoss = expectedLoss * 100;
+  const rawAccuracy =
+    103.1668100711649 * Math.exp(-0.04354415386753951 * winPercentLoss) -
+    3.166924740191411;
 
   return Math.max(0, Math.min(100, roundTo(rawAccuracy, 1)));
 };
@@ -110,17 +113,17 @@ const calculateColorAccuracy = (
 
   const movesWithAccuracy = colorMoves.map((move) => {
     const moveAccuracy = getMoveAccuracy(move);
-    const evalLoss =
-      move.evalLoss ??
+    const expectedLoss =
+      move.expectedPointsLoss ??
       (move.reasonTags.some((tag) => tag.includes('mate'))
-        ? SEVERE_MATE_LOSS
+        ? SEVERE_MATE_EXPECTED_LOSS
         : getFallbackEvalLoss(move.classification));
     const weight = getMoveWeight(move);
 
     totalWeight += weight;
     weightedAccuracySum += moveAccuracy * weight;
-    lossSum += evalLoss;
-    weightedLossSum += evalLoss * weight;
+    lossSum += expectedLoss;
+    weightedLossSum += expectedLoss * weight;
 
     return {
       move,
@@ -134,8 +137,8 @@ const calculateColorAccuracy = (
     accuracy: roundTo(accuracy, 1),
     detail: {
       movesCount: colorMoves.length,
-      averageLoss: roundTo(lossSum / colorMoves.length, 2),
-      weightedAverageLoss: roundTo(weightedLossSum / totalWeight, 2),
+      averageLoss: roundTo(lossSum / colorMoves.length, 4),
+      weightedAverageLoss: roundTo(weightedLossSum / totalWeight, 4),
     },
     movesWithAccuracy,
   };

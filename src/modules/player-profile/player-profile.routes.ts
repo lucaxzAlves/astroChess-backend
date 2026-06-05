@@ -16,3 +16,8 @@ playerProfileRoutes.patch(
   authenticate,
   asyncHandler(playerProfileController.updateMyPlayerProfilePreferences),
 );
+playerProfileRoutes.patch(
+  '/player-profile/me/chess-com',
+  authenticate,
+  asyncHandler(playerProfileController.updateMyChessComUsername),
+);

@@ -3,18 +3,14 @@ import { Model, Schema, Types, model, models } from 'mongoose';
 import {
   analysisStatuses,
   criticalMomentColors,
-  decisiveMomentCategories,
   gameAnalysisSources,
-  gamePhases,
-  recurringMistakeCategories,
-  severityLevels,
   storedMoveClassifications,
-  styleTraits,
   type GameAnalysisDocument,
 } from '../modules/player-profile/player-profile.types';
 
 const criticalMomentSchema = new Schema(
   {
+    ply: { type: Number },
     moveNumber: { type: Number },
     color: {
       type: String,
@@ -26,154 +22,28 @@ const criticalMomentSchema = new Schema(
     classification: {
       type: String,
       enum: storedMoveClassifications,
-      default: 'Unknown',
+      default: 'unknown',
     },
     evalBefore: { type: Schema.Types.Mixed },
     evalAfter: { type: Schema.Types.Mixed },
     evalLoss: { type: Number },
+    expectedBefore: { type: Number },
+    expectedAfter: { type: Number },
+    expectedLoss: { type: Number },
+    expectedPointsLoss: { type: Number },
+    centipawnLoss: { type: Number },
+    bestExpectedAfter: { type: Number },
+    playedExpectedAfter: { type: Number },
+    missLoss: { type: Number },
+    isBook: { type: Boolean, default: false },
+    isOnlyMove: { type: Boolean, default: false },
+    isSacrifice: { type: Boolean, default: false },
+    isCritical: { type: Boolean, default: false },
     fenBefore: { type: String, trim: true },
     fenAfter: { type: String, trim: true },
     pv: { type: [String], default: [] },
     comment: { type: String, trim: true },
     reasonTags: { type: [String], default: [] },
-  },
-  { _id: false },
-);
-
-const structuredSummarySchema = new Schema(
-  {
-    gameNarrative: { type: String, trim: true },
-    decisiveMoment: {
-      moveNumber: { type: Number },
-      playedMove: { type: String, trim: true },
-      side: {
-        type: String,
-        enum: criticalMomentColors,
-        default: 'unknown',
-      },
-      category: {
-        type: String,
-        enum: decisiveMomentCategories,
-        default: 'unknown',
-      },
-      severity: {
-        type: String,
-        enum: severityLevels,
-        default: 'medium',
-      },
-      humanReason: { type: String, trim: true },
-      betterPlan: { type: String, trim: true },
-    },
-    missedOpportunities: {
-      type: [
-        new Schema(
-          {
-            moveNumber: { type: Number },
-            sideThatErred: {
-              type: String,
-              enum: criticalMomentColors,
-              default: 'unknown',
-            },
-            whatHappened: { type: String, trim: true },
-            howToPunish: { type: String, trim: true },
-            theme: { type: String, trim: true },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    mistakePatterns: {
-      type: [
-        new Schema(
-          {
-            category: {
-              type: String,
-              enum: recurringMistakeCategories,
-              default: 'unknown',
-            },
-            name: { type: String, trim: true },
-            severity: {
-              type: String,
-              enum: severityLevels,
-              default: 'medium',
-            },
-            phase: {
-              type: String,
-              enum: gamePhases,
-              default: 'unknown',
-            },
-            evidence: { type: String, trim: true },
-            relatedMoves: { type: [Number], default: [] },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    styleSignals: {
-      type: [
-        new Schema(
-          {
-            trait: {
-              type: String,
-              enum: styleTraits,
-              default: 'unknown',
-            },
-            confidence: { type: Number },
-            evidence: { type: String, trim: true },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    openingInsights: {
-      type: [
-        new Schema(
-          {
-            openingName: { type: String, trim: true },
-            eco: { type: String, trim: true },
-            color: {
-              type: String,
-              enum: criticalMomentColors,
-              default: 'unknown',
-            },
-            issue: { type: String, trim: true },
-            recommendation: { type: String, trim: true },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    endgameInsights: {
-      type: [
-        new Schema(
-          {
-            type: { type: String, trim: true },
-            issue: { type: String, trim: true },
-            recommendation: { type: String, trim: true },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    strengths: {
-      type: [
-        new Schema(
-          {
-            name: { type: String, trim: true },
-            evidence: { type: String, trim: true },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    recommendedFocus: { type: [String], default: [] },
-    profileTags: { type: [String], default: [] },
   },
   { _id: false },
 );
@@ -186,6 +56,11 @@ const gameAnalysisSchema = new Schema<GameAnalysisDocument>(
       required: true,
       index: true,
     },
+    batchId: {
+      type: Types.ObjectId,
+      ref: 'AnalysisBatch',
+      index: true,
+    },
     gameId: {
       type: String,
       trim: true,
@@ -195,6 +70,19 @@ const gameAnalysisSchema = new Schema<GameAnalysisDocument>(
       enum: gameAnalysisSources,
       default: 'unknown',
       index: true,
+    },
+    targetPlayer: {
+      username: { type: String, trim: true },
+      color: {
+        type: String,
+        enum: criticalMomentColors,
+        default: 'unknown',
+      },
+      platform: {
+        type: String,
+        enum: ['chess.com', 'lichess', 'manual', 'unknown'],
+        default: 'unknown',
+      },
     },
     metadata: {
       white: { type: String, trim: true },
@@ -217,6 +105,81 @@ const gameAnalysisSchema = new Schema<GameAnalysisDocument>(
       required: true,
       trim: true,
     },
+    accuracy: {
+      white: { type: Number },
+      black: { type: Number },
+    },
+    moveClassificationSummary: {
+      white: {
+        brilliant: { type: Number, default: 0 },
+        great: { type: Number, default: 0 },
+        best: { type: Number, default: 0 },
+        excellent: { type: Number, default: 0 },
+        good: { type: Number, default: 0 },
+        book: { type: Number, default: 0 },
+        inaccuracy: { type: Number, default: 0 },
+        mistake: { type: Number, default: 0 },
+        miss: { type: Number, default: 0 },
+        blunder: { type: Number, default: 0 },
+      },
+      black: {
+        brilliant: { type: Number, default: 0 },
+        great: { type: Number, default: 0 },
+        best: { type: Number, default: 0 },
+        excellent: { type: Number, default: 0 },
+        good: { type: Number, default: 0 },
+        book: { type: Number, default: 0 },
+        inaccuracy: { type: Number, default: 0 },
+        mistake: { type: Number, default: 0 },
+        miss: { type: Number, default: 0 },
+        blunder: { type: Number, default: 0 },
+      },
+    },
+    classificationDebugSummary: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+    moveClassifications: {
+      type: [
+        new Schema(
+          {
+            ply: { type: Number, required: true },
+            moveNumber: { type: Number, required: true },
+            color: {
+              type: String,
+              enum: ['white', 'black'],
+              required: true,
+            },
+            san: { type: String, required: true, trim: true },
+            classification: {
+              type: String,
+              enum: storedMoveClassifications,
+              default: 'unknown',
+            },
+            critical: { type: Boolean, default: false },
+            moveAccuracy: { type: Number },
+            evalLoss: { type: Number },
+            evalBefore: { type: Schema.Types.Mixed },
+            evalAfter: { type: Schema.Types.Mixed },
+            expectedBefore: { type: Number },
+            expectedAfter: { type: Number },
+            expectedLoss: { type: Number },
+            expectedPointsLoss: { type: Number },
+            centipawnLoss: { type: Number },
+            bestExpectedAfter: { type: Number },
+            playedExpectedAfter: { type: Number },
+            missLoss: { type: Number },
+            isBook: { type: Boolean, default: false },
+            isOnlyMove: { type: Boolean, default: false },
+            isSacrifice: { type: Boolean, default: false },
+            isCritical: { type: Boolean, default: false },
+            reasonTags: { type: [String], default: [] },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
     criticalMoments: {
       type: [criticalMomentSchema],
       default: [],
@@ -227,8 +190,12 @@ const gameAnalysisSchema = new Schema<GameAnalysisDocument>(
       rawResponse: { type: Schema.Types.Mixed },
       error: { type: String, trim: true },
     },
+    gameEvidenceSummary: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
     structuredSummary: {
-      type: structuredSummarySchema,
+      type: Schema.Types.Mixed,
       default: undefined,
     },
     analysisStatus: {
@@ -243,6 +210,7 @@ const gameAnalysisSchema = new Schema<GameAnalysisDocument>(
 );
 
 gameAnalysisSchema.index({ userId: 1 });
+gameAnalysisSchema.index({ batchId: 1 });
 gameAnalysisSchema.index({ createdAt: -1 });
 gameAnalysisSchema.index({ 'metadata.opening': 1 });
 gameAnalysisSchema.index({ 'metadata.eco': 1 });

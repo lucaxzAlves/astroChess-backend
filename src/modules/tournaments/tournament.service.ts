@@ -1,50 +1,45 @@
-import { AppError } from '../../utils/AppError';
 import { env } from '../../config/env';
-import { enrichTournaments } from './enrichers/tournament.enricher';
-import { importCbxTournaments } from './importers/cbx.importer';
-import { importChessResultsBrazilTournaments } from './importers/chess-results.importer';
-import { ImportedTournament } from './importers/importer.types';
-import { normalizeTournament, normalizeText } from './tournament.normalizer';
+import { AppError } from '../../utils/AppError';
+import { TournamentDocument } from './tournament.model';
 import * as tournamentRepository from './tournament.repository';
+import { ChessResultsScraper } from './scrapers/chess-results.scraper';
 import {
-  TournamentListFilters,
-  TournamentSource,
-  TournamentStatus,
+  extractCityFromText,
+  extractStateFromText,
+  normalizeSource,
+  normalizeSpaces,
+  normalizeStatus,
+  normalizeTimeControl,
+  normalizeTournamentTitle,
+} from './scrapers/tournament-normalizer';
+import {
+  CanonicalTournamentSource,
+  CanonicalTournamentStatus,
+  TournamentNormalizedInput,
+  TournamentSearchFilters,
+  TournamentSearchResponse,
   TournamentSyncMetrics,
   TournamentTimeControl,
 } from './tournament.types';
-import { extractTournamentDates } from './utils/date-parser';
-import { isValidBrazilianState } from './utils/location-parser';
+import { parseTournamentDate } from './scrapers/tournament-date-parser';
 
 const TIME_CONTROLS = new Set<TournamentTimeControl>([
   'classical',
   'rapid',
   'blitz',
+  'bullet',
   'mixed',
   'unknown',
 ]);
-const SOURCES = new Set<TournamentSource>(['CBX', 'CHESS_RESULTS']);
-const STATUSES = new Set<TournamentStatus>(['upcoming', 'ongoing', 'finished', 'unknown']);
+const SOURCES = new Set<CanonicalTournamentSource>(['chess-results', 'cbx', 'manual', 'unknown']);
+const STATUSES = new Set<CanonicalTournamentStatus>([
+  'not_started',
+  'playing',
+  'finished',
+  'unknown',
+]);
 
-const getStartDateSummary = (tournaments: ImportedTournament[]) => {
-  let withStartDate = 0;
-  let missingDate = 0;
-
-  for (const tournament of tournaments) {
-    const normalizedTournament = normalizeTournament(tournament);
-
-    if (normalizedTournament?.startDate) {
-      withStartDate += 1;
-    } else {
-      missingDate += 1;
-    }
-  }
-
-  return {
-    withStartDate,
-    missingDate,
-  };
-};
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parsePositiveIntegerQuery = (value: unknown, fallback: number, max: number): number => {
   const parsedValue = typeof value === 'string' ? Number(value) : fallback;
@@ -57,19 +52,13 @@ const parsePositiveIntegerQuery = (value: unknown, fallback: number, max: number
 };
 
 const parseBooleanQuery = (value: unknown): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return value === 'true';
+  if (value === undefined) return undefined;
+  return value === 'true' || value === true;
 };
 
 const parseDateQuery = (value: unknown, fieldName: string): Date | undefined => {
-  if (typeof value !== 'string' || !value) {
-    return undefined;
-  }
-
-  const date = new Date(value);
+  if (typeof value !== 'string' || !value) return undefined;
+  const date = new Date(`${value}T00:00:00.000Z`);
 
   if (Number.isNaN(date.getTime())) {
     throw new AppError(`${fieldName} must be a valid date`, 400);
@@ -78,24 +67,37 @@ const parseDateQuery = (value: unknown, fieldName: string): Date | undefined => 
   return date;
 };
 
-export const parseTournamentFilters = (query: Record<string, unknown>): TournamentListFilters => {
-  const state = typeof query.state === 'string' ? query.state.trim().toUpperCase() : undefined;
+const getCacheExpiresAt = (tournament: TournamentNormalizedInput): Date => {
+  const now = new Date();
+  const ttlHours =
+    tournament.status === 'playing'
+      ? 3
+      : tournament.status === 'finished'
+        ? 24 * 7
+        : env.tournamentCacheTtlHours;
+
+  return new Date(now.getTime() + ttlHours * 60 * 60 * 1000);
+};
+
+const getDetailLimit = (filters: TournamentSearchFilters): number => {
+  return Math.min(filters.limit, env.tournamentScrapeMaxDetailsPerSearch);
+};
+
+const parseTournamentSearchFilters = (
+  query: Record<string, unknown>,
+  forceRefreshOverride?: boolean,
+): TournamentSearchFilters => {
+  const source =
+    typeof query.source === 'string' ? normalizeSource(query.source) : undefined;
+  const status =
+    typeof query.status === 'string' ? (query.status as CanonicalTournamentStatus) : undefined;
   const timeControl =
     typeof query.timeControl === 'string'
       ? (query.timeControl as TournamentTimeControl)
       : undefined;
-  const source = typeof query.source === 'string' ? (query.source as TournamentSource) : undefined;
-  const status = typeof query.status === 'string' ? (query.status as TournamentStatus) : undefined;
+  const state = typeof query.state === 'string' ? query.state.trim().toUpperCase() : undefined;
 
-  if (state && !isValidBrazilianState(state)) {
-    throw new AppError('Invalid state filter', 400);
-  }
-
-  if (timeControl && !TIME_CONTROLS.has(timeControl)) {
-    throw new AppError('Invalid timeControl filter', 400);
-  }
-
-  if (source && !SOURCES.has(source)) {
+  if (source && source !== 'unknown' && !SOURCES.has(source)) {
     throw new AppError('Invalid source filter', 400);
   }
 
@@ -103,165 +105,327 @@ export const parseTournamentFilters = (query: Record<string, unknown>): Tourname
     throw new AppError('Invalid status filter', 400);
   }
 
+  if (timeControl && !TIME_CONTROLS.has(timeControl)) {
+    throw new AppError('Invalid timeControl filter', 400);
+  }
+
   return {
-    search: typeof query.search === 'string' ? normalizeText(query.search) : undefined,
-    city: typeof query.city === 'string' ? query.city.trim() : undefined,
     state,
+    city: typeof query.city === 'string' ? normalizeSpaces(query.city) : undefined,
     timeControl,
-    source,
+    from:
+      parseDateQuery(query.from, 'from') ??
+      parseDateQuery(query.startDateFrom, 'startDateFrom'),
+    to:
+      parseDateQuery(query.to, 'to') ?? parseDateQuery(query.startDateTo, 'startDateTo'),
     status,
-    startDateFrom: parseDateQuery(query.startDateFrom, 'startDateFrom'),
-    startDateTo: parseDateQuery(query.startDateTo, 'startDateTo'),
-    upcomingOnly: parseBooleanQuery(query.upcomingOnly),
+    search:
+      typeof query.search === 'string' && query.search.trim()
+        ? normalizeTournamentTitle(query.search)
+        : undefined,
+    source: source && source !== 'unknown' ? source : undefined,
+    forceRefresh: forceRefreshOverride ?? parseBooleanQuery(query.forceRefresh) ?? false,
     page: parsePositiveIntegerQuery(query.page, 1, 100_000),
     limit: parsePositiveIntegerQuery(query.limit, 20, 100),
   };
 };
 
-export const syncTournamentsFromSources = async (): Promise<TournamentSyncMetrics> => {
-  const metrics: TournamentSyncMetrics = {
-    cbxFound: 0,
-    chessResultsFound: 0,
-    totalNormalized: 0,
+const discoveryToTournament = (
+  discovery: {
+    title: string;
+    sourceUrl: string;
+    sourceTournamentId?: string | null;
+    statusRaw?: string | null;
+    timeControlRaw?: string | null;
+    surroundingText?: string | null;
+  },
+): TournamentNormalizedInput => {
+  const dateResult = parseTournamentDate({
+    title: discovery.title,
+    rawDateText: discovery.surroundingText ?? undefined,
+  });
+  const normalizedTitle = normalizeTournamentTitle(discovery.title);
+  const locationText = discovery.surroundingText ?? discovery.title;
+  const tournament: TournamentNormalizedInput = {
+    source: 'chess-results',
+    sourceTournamentId: discovery.sourceTournamentId ?? undefined,
+    sourceUrl: discovery.sourceUrl,
+    title: discovery.title,
+    normalizedTitle,
+    description: discovery.surroundingText ?? null,
+    status: normalizeStatus(discovery.statusRaw),
+    timeControl: normalizeTimeControl(`${discovery.timeControlRaw ?? ''} ${discovery.title}`),
+    startDate: dateResult.startDate,
+    endDate: dateResult.endDate,
+    dateText: dateResult.dateText,
+    dateConfidence: dateResult.dateConfidence,
+    location: {
+      city: extractCityFromText(locationText),
+      state: extractStateFromText(locationText),
+      country: 'BR',
+      raw: locationText,
+    },
+    organizer: null,
+    arbiter: null,
+    federation: null,
+    playersCount: null,
+    rounds: null,
+    system: 'unknown',
+    category: null,
+    ratingType: 'unknown',
+    links: {
+      chessResults: discovery.sourceUrl,
+    },
+    metadata: {
+      discovery: true,
+    },
+    parseWarnings: dateResult.warnings,
+    detailsScraped: false,
+    lastScrapedAt: new Date(),
+    sourceLastUpdatedAt: null,
+  };
+
+  return {
+    ...tournament,
+    cacheExpiresAt: getCacheExpiresAt(tournament),
+  };
+};
+
+const mergeDiscoveryAndDetails = (
+  fallback: TournamentNormalizedInput,
+  details: Partial<TournamentNormalizedInput>,
+): TournamentNormalizedInput => {
+  const merged: TournamentNormalizedInput = {
+    ...fallback,
+    ...details,
+    source: 'chess-results',
+    sourceTournamentId: details.sourceTournamentId ?? fallback.sourceTournamentId,
+    sourceUrl: details.sourceUrl ?? fallback.sourceUrl,
+    title: details.title ?? fallback.title,
+    normalizedTitle: normalizeTournamentTitle(details.title ?? fallback.title),
+    status:
+      details.status && details.status !== 'unknown'
+        ? details.status
+        : fallback.status,
+    timeControl:
+      details.timeControl && details.timeControl !== 'unknown'
+        ? details.timeControl
+        : fallback.timeControl,
+    location: {
+      city: details.location?.city ?? fallback.location.city ?? null,
+      state: details.location?.state ?? fallback.location.state ?? null,
+      country: details.location?.country ?? fallback.location.country ?? 'BR',
+      venue: details.location?.venue ?? fallback.location.venue ?? null,
+      raw: details.location?.raw ?? fallback.location.raw ?? null,
+    },
+    links: {
+      ...fallback.links,
+      ...details.links,
+      chessResults: details.links?.chessResults ?? fallback.sourceUrl,
+    },
+    parseWarnings: [...(fallback.parseWarnings ?? []), ...(details.parseWarnings ?? [])],
+    detailsScraped: details.detailsScraped ?? fallback.detailsScraped,
+    lastScrapedAt: details.lastScrapedAt ?? new Date(),
+  };
+
+  return {
+    ...merged,
+    cacheExpiresAt: getCacheExpiresAt(merged),
+  };
+};
+
+export const refreshSearch = async (
+  filters: TournamentSearchFilters,
+): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> => {
+  const scraper = new ChessResultsScraper();
+  const discovered = await scraper.discoverBrazilTournaments(filters);
+  const detailLimit = getDetailLimit(filters);
+  const candidates = discovered.slice(0, detailLimit);
+  const result = {
     created: 0,
     updated: 0,
     skipped: 0,
-    errors: [],
-    enrichment: {
-      enabled: env.tournamentsEnrichEnabled,
-      attempted: 0,
-      success: 0,
-      failed: 0,
-      skipped: 0,
-      withDateAfterEnrichment: 0,
-      errors: [],
-    },
-    dateExtraction: {
-      beforeEnrichment: {
-        withStartDate: 0,
-        missingDate: 0,
+    errors: [] as string[],
+  };
+
+  for (const [index, discovery] of candidates.entries()) {
+    if (index > 0 && env.tournamentScrapeRequestDelayMs > 0) {
+      await sleep(env.tournamentScrapeRequestDelayMs);
+    }
+
+    const fallback = discoveryToTournament(discovery);
+
+    try {
+      const details = await scraper.scrapeTournamentDetails(discovery.sourceUrl);
+      const normalized = mergeDiscoveryAndDetails(fallback, details);
+      const upsert = await tournamentRepository.upsertTournament(normalized);
+
+      if (upsert.action === 'created') result.created += 1;
+      else result.updated += 1;
+    } catch (error) {
+      result.errors.push(
+        error instanceof Error
+          ? `${discovery.title}: ${error.message}`
+          : `${discovery.title}: unknown scraping error`,
+      );
+
+      try {
+        const upsert = await tournamentRepository.upsertTournament(fallback);
+        if (upsert.action === 'created') result.created += 1;
+        else result.updated += 1;
+      } catch (upsertError) {
+        result.skipped += 1;
+        result.errors.push(
+          upsertError instanceof Error ? upsertError.message : 'Tournament fallback upsert failed',
+        );
+      }
+    }
+  }
+
+  return result;
+};
+
+export const searchWithCache = async (
+  query: Record<string, unknown>,
+  forceRefreshOverride?: boolean,
+): Promise<TournamentSearchResponse> => {
+  const filters = parseTournamentSearchFilters(query, forceRefreshOverride);
+  const usedCache = !filters.forceRefresh && (await tournamentRepository.hasFreshCache(filters));
+  let refreshed = false;
+
+  if (!usedCache) {
+    await refreshSearch(filters);
+    refreshed = true;
+  }
+
+  const result = await tournamentRepository.findTournaments(filters);
+  const lastRefreshAt = await tournamentRepository.getLatestRefreshAt(filters);
+
+  return {
+    success: true,
+    data: {
+      items: result.items,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        totalPages: result.totalPages,
       },
-      afterEnrichment: {
-        withStartDate: 0,
-        missingDate: 0,
-      },
-      withStartDate: 0,
-      withEndDate: 0,
-      missingDate: 0,
-      highConfidence: 0,
-      mediumConfidence: 0,
-      lowConfidence: 0,
-      bySource: {
-        CBX: {
-          total: 0,
-          withStartDate: 0,
-          missingDate: 0,
-        },
-        CHESS_RESULTS: {
-          total: 0,
-          withStartDate: 0,
-          missingDate: 0,
-        },
+      cache: {
+        usedCache,
+        refreshed,
+        lastRefreshAt: lastRefreshAt ? lastRefreshAt.toISOString() : null,
       },
     },
   };
-  const importedTournaments = [];
-
-  try {
-    const cbxTournaments = await importCbxTournaments();
-    metrics.cbxFound = cbxTournaments.length;
-    importedTournaments.push(...cbxTournaments);
-  } catch (error) {
-    metrics.errors.push(error instanceof Error ? error.message : 'CBX importer failed');
-  }
-
-  try {
-    const chessResultsTournaments = await importChessResultsBrazilTournaments();
-    metrics.chessResultsFound = chessResultsTournaments.length;
-    importedTournaments.push(...chessResultsTournaments);
-  } catch (error) {
-    metrics.errors.push(error instanceof Error ? error.message : 'Chess-Results importer failed');
-  }
-
-  metrics.dateExtraction.beforeEnrichment = getStartDateSummary(importedTournaments);
-
-  const enrichmentResult = await enrichTournaments(importedTournaments);
-  metrics.enrichment = enrichmentResult.metrics;
-  metrics.dateExtraction.afterEnrichment = getStartDateSummary(enrichmentResult.tournaments);
-
-  for (const importedTournament of enrichmentResult.tournaments) {
-    const normalizedTournament = normalizeTournament(importedTournament);
-
-    if (!normalizedTournament) {
-      metrics.skipped += 1;
-      continue;
-    }
-
-    metrics.totalNormalized += 1;
-    metrics.dateExtraction.bySource[normalizedTournament.source].total += 1;
-
-    if (normalizedTournament.startDate) {
-      metrics.dateExtraction.withStartDate += 1;
-      metrics.dateExtraction.bySource[normalizedTournament.source].withStartDate += 1;
-    } else {
-      metrics.dateExtraction.missingDate += 1;
-      metrics.dateExtraction.bySource[normalizedTournament.source].missingDate += 1;
-    }
-
-    if (normalizedTournament.endDate) {
-      metrics.dateExtraction.withEndDate += 1;
-    }
-
-    if (normalizedTournament.tags.includes('date_confidence_high')) {
-      metrics.dateExtraction.highConfidence += 1;
-    }
-
-    if (normalizedTournament.tags.includes('date_confidence_medium')) {
-      metrics.dateExtraction.mediumConfidence += 1;
-    }
-
-    if (normalizedTournament.tags.includes('date_confidence_low')) {
-      metrics.dateExtraction.lowConfidence += 1;
-    }
-
-    if (env.tournamentsDateDebug) {
-      console.log('Tournament date extraction', {
-        title: normalizedTournament.title,
-        rawDateText: normalizedTournament.rawDateText,
-        confidence: normalizedTournament.tags.find((tag) => tag.startsWith('date_confidence_')),
-        startDate: normalizedTournament.startDate,
-        endDate: normalizedTournament.endDate,
-        source: normalizedTournament.source,
-      });
-    }
-
-    try {
-      const result = await tournamentRepository.upsertTournament(normalizedTournament);
-
-      if (result.action === 'created') {
-        metrics.created += 1;
-      } else {
-        metrics.updated += 1;
-      }
-    } catch (error) {
-      metrics.skipped += 1;
-      metrics.errors.push(error instanceof Error ? error.message : 'Tournament upsert failed');
-    }
-  }
-
-  return metrics;
 };
 
 export const listTournaments = async (query: Record<string, unknown>) => {
-  return tournamentRepository.findTournaments(parseTournamentFilters(query));
+  return searchWithCache(query);
 };
 
-export const getTournament = async (id: string) => {
-  return tournamentRepository.getTournamentById(id);
+export const getTournament = async (id: string, refresh = false): Promise<TournamentDocument> => {
+  const tournament = await tournamentRepository.getTournamentById(id);
+
+  if (!refresh || !tournament.sourceUrl || tournament.source !== 'chess-results') {
+    return tournament;
+  }
+
+  const scraper = new ChessResultsScraper();
+  const fallback: TournamentNormalizedInput = {
+    source: tournament.source,
+    sourceTournamentId: tournament.sourceTournamentId,
+    sourceUrl: tournament.sourceUrl,
+    title: tournament.title,
+    normalizedTitle: tournament.normalizedTitle,
+    description: tournament.description ?? null,
+    status: tournament.status,
+    timeControl: tournament.timeControl,
+    startDate: tournament.startDate ?? null,
+    endDate: tournament.endDate ?? null,
+    dateText: tournament.dateText ?? null,
+    dateConfidence: tournament.dateConfidence,
+    location: tournament.location,
+    organizer: tournament.organizer ?? null,
+    arbiter: tournament.arbiter ?? null,
+    federation: tournament.federation ?? null,
+    playersCount: tournament.playersCount ?? null,
+    rounds: tournament.rounds ?? null,
+    system: tournament.system,
+    category: tournament.category ?? null,
+    ratingType: tournament.ratingType,
+    links: tournament.links,
+    metadata: tournament.metadata,
+    parseWarnings: tournament.parseWarnings,
+    detailsScraped: tournament.detailsScraped,
+    lastScrapedAt: tournament.lastScrapedAt ?? null,
+    sourceLastUpdatedAt: tournament.sourceLastUpdatedAt ?? null,
+  };
+  const details = await scraper.scrapeTournamentDetails(tournament.sourceUrl);
+  const normalized = mergeDiscoveryAndDetails(fallback, details);
+  const upsert = await tournamentRepository.upsertTournament(normalized);
+
+  return upsert.tournament;
 };
 
 export const getTournamentFilters = async () => {
   return tournamentRepository.getAvailableFilters();
+};
+
+export const forceRefresh = async (body: Record<string, unknown>) => {
+  return searchWithCache(body, true);
+};
+
+export const syncTournamentsFromSources = async (): Promise<TournamentSyncMetrics> => {
+  if (!env.tournamentGlobalCronEnabled) {
+    throw new AppError(
+      'Global tournament sync is disabled. Use /tournaments/search or /tournaments/refresh with filters.',
+      410,
+    );
+  }
+
+  const response = await searchWithCache({ forceRefresh: true, limit: env.tournamentScrapeMaxDetailsPerSearch }, true);
+
+  return {
+    cbxFound: 0,
+    chessResultsFound: response.data.items.length,
+    totalNormalized: response.data.items.length,
+    created: 0,
+    updated: response.data.items.length,
+    skipped: 0,
+    errors: [],
+    enrichment: {
+      enabled: true,
+      attempted: response.data.items.length,
+      success: response.data.items.length,
+      failed: 0,
+      skipped: 0,
+      withDateAfterEnrichment: response.data.items.filter((item) => item.startDate).length,
+      errors: [],
+    },
+    dateExtraction: {
+      beforeEnrichment: { withStartDate: 0, missingDate: 0 },
+      afterEnrichment: { withStartDate: 0, missingDate: 0 },
+      withStartDate: response.data.items.filter((item) => item.startDate).length,
+      withEndDate: response.data.items.filter((item) => item.endDate).length,
+      missingDate: response.data.items.filter((item) => !item.startDate).length,
+      highConfidence: response.data.items.filter((item) => item.dateConfidence === 'high').length,
+      mediumConfidence: response.data.items.filter((item) => item.dateConfidence === 'medium').length,
+      lowConfidence: response.data.items.filter((item) => item.dateConfidence === 'low').length,
+      bySource: {
+        'chess-results': {
+          total: response.data.items.length,
+          withStartDate: response.data.items.filter((item) => item.startDate).length,
+          missingDate: response.data.items.filter((item) => !item.startDate).length,
+        },
+        cbx: { total: 0, withStartDate: 0, missingDate: 0 },
+        manual: { total: 0, withStartDate: 0, missingDate: 0 },
+        unknown: { total: 0, withStartDate: 0, missingDate: 0 },
+        CHESS_RESULTS: { total: 0, withStartDate: 0, missingDate: 0 },
+        CBX: { total: 0, withStartDate: 0, missingDate: 0 },
+      },
+    },
+  };
 };
 
 export const debugExtractDate = (text: string) => {
@@ -269,10 +433,9 @@ export const debugExtractDate = (text: string) => {
     throw new AppError('Debug endpoint is not available in production', 404);
   }
 
-  return extractTournamentDates({
+  return parseTournamentDate({
     title: text,
     rawDateText: text,
-    description: text,
-    htmlSnippet: text,
+    pageText: text,
   });
 };

@@ -5,10 +5,18 @@ export type StockfishEvaluation = {
   evaluationType: EvaluationType;
 };
 
+export type StockfishCandidateLine = StockfishEvaluation & {
+  multipv: number;
+  bestMove: string;
+  pv: string[];
+  depth: number;
+};
+
 export type StockfishAnalysis = StockfishEvaluation & {
   bestMove: string;
   pv: string[];
   depth: number;
+  candidateLines?: StockfishCandidateLine[];
   rawOutput?: string[];
 };
 
@@ -17,6 +25,7 @@ export type StockfishAnalyzeOptions = {
   movetimeMs?: number;
   includePv: boolean;
   mode: 'fast' | 'deep';
+  multiPv?: number;
 };
 
 export type StockfishClientOptions = {

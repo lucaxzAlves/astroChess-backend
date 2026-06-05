@@ -88,7 +88,7 @@ export class StockfishClient {
 
   async analyzePosition(
     fen: string,
-    { depth, movetimeMs, includePv, mode }: StockfishAnalyzeOptions,
+    { depth, movetimeMs, includePv, mode, multiPv = 1 }: StockfishAnalyzeOptions,
   ): Promise<StockfishAnalysis> {
     await this.start();
 
@@ -97,6 +97,7 @@ export class StockfishClient {
       movetimeMs,
       includePv,
       mode,
+      multiPv,
     });
 
     const cachedAnalysis = this.cache.get(cacheKey);
@@ -109,6 +110,7 @@ export class StockfishClient {
 
     const outputStartIndex = this.outputLines.length;
 
+    this.sendCommand(`setoption name MultiPV value ${multiPv}`);
     this.sendCommand(`position fen ${fen}`);
     this.sendCommand(this.buildGoCommand({ depth, movetimeMs }));
 
@@ -131,6 +133,7 @@ export class StockfishClient {
       movetimeMs,
       includePv: false,
       mode: 'fast',
+      multiPv: 3,
     });
   }
 
@@ -147,6 +150,7 @@ export class StockfishClient {
       movetimeMs,
       includePv,
       mode: 'deep',
+      multiPv: 3,
     });
   }
 
@@ -209,6 +213,7 @@ export class StockfishClient {
       fen,
       options.mode,
       options.includePv ? 'pv' : 'nopv',
+      options.multiPv ? `multipv:${options.multiPv}` : 'multipv:1',
       options.depth ? `depth:${options.depth}` : '',
       options.movetimeMs ? `movetime:${options.movetimeMs}` : '',
     ].join('|');

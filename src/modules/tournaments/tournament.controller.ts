@@ -3,10 +3,18 @@ import { Request, Response } from 'express';
 import * as tournamentService from './tournament.service';
 
 export const syncTournaments = async (_request: Request, response: Response): Promise<Response> => {
-  // TODO: protect this endpoint with admin authentication before production use.
   const metrics = await tournamentService.syncTournamentsFromSources();
 
   return response.status(200).json(metrics);
+};
+
+export const searchTournaments = async (
+  request: Request,
+  response: Response,
+): Promise<Response> => {
+  const result = await tournamentService.searchWithCache(request.query);
+
+  return response.status(200).json(result);
 };
 
 export const listTournaments = async (request: Request, response: Response): Promise<Response> => {
@@ -16,9 +24,21 @@ export const listTournaments = async (request: Request, response: Response): Pro
 };
 
 export const getTournament = async (request: Request, response: Response): Promise<Response> => {
-  const tournament = await tournamentService.getTournament(String(request.params.id));
+  const tournament = await tournamentService.getTournament(
+    String(request.params.id),
+    request.query.refresh === 'true',
+  );
 
   return response.status(200).json(tournament);
+};
+
+export const refreshTournaments = async (
+  request: Request,
+  response: Response,
+): Promise<Response> => {
+  const result = await tournamentService.forceRefresh(request.body ?? {});
+
+  return response.status(200).json(result);
 };
 
 export const getTournamentFilters = async (

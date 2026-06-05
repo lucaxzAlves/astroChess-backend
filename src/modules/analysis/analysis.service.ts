@@ -1,7 +1,7 @@
 import { parsePgnGame } from '../../chess/pgn.parser';
 import { env } from '../../config/env';
 import { StockfishClient } from '../../engine/stockfish.client';
-import { requestAiGameReview } from '../ai-review/ai-review.service';
+import { requestSingleGameReview } from '../ai-review/ai-review.service';
 import { AppError } from '../../utils/AppError';
 import { analyzeParsedGame } from '../../chess/game-analyzer';
 import { AnalysisGameInput, AnalysisPgnResponse } from './analysis.types';
@@ -13,7 +13,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
 
-const validateGames = (body: unknown): AnalysisGameInput[] => {
+export const validateAnalysisGames = (
+  body: unknown,
+  maxGamesPerRequest = MAX_GAMES_PER_REQUEST,
+): AnalysisGameInput[] => {
   if (!isRecord(body) || !Array.isArray(body.games)) {
     throw new AppError('The request body must include a games array.', 400);
   }
@@ -22,10 +25,10 @@ const validateGames = (body: unknown): AnalysisGameInput[] => {
     throw new AppError('The games array must include at least one game.', 400);
   }
 
-  if (body.games.length > MAX_GAMES_PER_REQUEST) {
-    throw new AppError(`A request can include at most ${MAX_GAMES_PER_REQUEST} games.`, 400, {
+  if (body.games.length > maxGamesPerRequest) {
+    throw new AppError(`A request can include at most ${maxGamesPerRequest} games.`, 400, {
       received: body.games.length,
-      max: MAX_GAMES_PER_REQUEST,
+      max: maxGamesPerRequest,
     });
   }
 
@@ -93,17 +96,46 @@ const createEmptyMetrics = () => {
   };
 };
 
-export const analyzePgnGames = async (body: unknown): Promise<AnalysisPgnResponse> => {
-  const startedAt = Date.now();
-  const games = validateGames(body);
-  const includeAiReview = shouldIncludeAiReview(body);
-  const parsedGames = games.map((game, index) => parsePgnGame(game, index));
-  const stockfish = new StockfishClient({
+const getTechnicalAnalysisOptions = () => {
+  return {
+    fastMovetimeMs: env.stockfishFastMovetimeMs,
+    deepMovetimeMs: env.stockfishDeepMovetimeMs,
+    deepDepth: env.stockfishDeepDepth,
+    maxDeepAnalysisPerGame: env.maxDeepAnalysisPerGame,
+    maxPvMoves: env.maxPvMoves,
+    ignoreErrorsBeforeMove: env.ignoreErrorsBeforeMove,
+    maxBookMovesPerSide: env.maxBookMovesPerSide,
+    maxGreatMovesPerSide: env.maxGreatMovesPerSide,
+    enableMoveClassifications: env.analysisEnableMoveClassifications,
+    enableAccuracy: env.analysisEnableAccuracy,
+    enableClassificationDebug: env.analysisClassificationDebug,
+  };
+};
+
+export const createStockfishClient = (): StockfishClient => {
+  return new StockfishClient({
     binaryPath: env.stockfishPath,
     timeoutMs: env.stockfishTimeoutMs,
     threads: env.stockfishThreads,
     hashMb: env.stockfishHashMb,
   });
+};
+
+export const analyzeSingleGamePgn = async (
+  game: AnalysisGameInput,
+  stockfish: StockfishClient,
+  index = 0,
+) => {
+  const parsedGame = parsePgnGame(game, index);
+
+  return analyzeParsedGame(parsedGame, stockfish, getTechnicalAnalysisOptions());
+};
+
+export const analyzePgnGames = async (body: unknown): Promise<AnalysisPgnResponse> => {
+  const startedAt = Date.now();
+  const games = validateAnalysisGames(body);
+  const includeAiReview = shouldIncludeAiReview(body);
+  const stockfish = createStockfishClient();
 
   try {
     await stockfish.start();
@@ -111,20 +143,8 @@ export const analyzePgnGames = async (body: unknown): Promise<AnalysisPgnRespons
     const results = [];
     const metrics = createEmptyMetrics();
 
-    for (const [index, game] of parsedGames.entries()) {
-      const gameResult = await analyzeParsedGame(game, stockfish, {
-        fastMovetimeMs: env.stockfishFastMovetimeMs,
-        deepMovetimeMs: env.stockfishDeepMovetimeMs,
-        deepDepth: env.stockfishDeepDepth,
-        maxDeepAnalysisPerGame: env.maxDeepAnalysisPerGame,
-        maxPvMoves: env.maxPvMoves,
-        ignoreErrorsBeforeMove: env.ignoreErrorsBeforeMove,
-        maxBookMovesPerSide: env.maxBookMovesPerSide,
-        maxGreatMovesPerSide: env.maxGreatMovesPerSide,
-        enableMoveClassifications: env.analysisEnableMoveClassifications,
-        enableAccuracy: env.analysisEnableAccuracy,
-        enableClassificationDebug: env.analysisClassificationDebug,
-      });
+    for (const [index, game] of games.entries()) {
+      const gameResult = await analyzeSingleGamePgn(game, stockfish, index);
       const analysis = gameResult.analysis;
 
       if (includeAiReview) {
@@ -134,12 +154,19 @@ export const analyzePgnGames = async (body: unknown): Promise<AnalysisPgnRespons
             error: 'AI review skipped because max games per request was exceeded',
           };
         } else {
-          analysis.aiReview = await requestAiGameReview({
+          analysis.aiReview = await requestSingleGameReview({
             gameId: game.id,
             originalPgn: game.pgn,
             annotatedPgn: analysis.annotatedPgn,
             criticalMoments: analysis.criticalMoments,
-            playerTarget: game.playerTarget,
+            moveClassifications: analysis.moveClassifications,
+            moveClassificationSummary: analysis.moveClassificationSummary,
+            accuracy: analysis.accuracy,
+            targetPlayer: game.playerTarget
+              ? {
+                  color: game.playerTarget,
+                }
+              : undefined,
             metadata: game.metadata,
           });
         }

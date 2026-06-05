@@ -10,6 +10,7 @@ import {
   type RecurringMistake,
   type StrengthExample,
   type StructuredGameSummary,
+  recommendationTypes,
 } from './player-profile.types';
 
 const MAX_EXAMPLES_PER_ITEM = 5;
@@ -282,10 +283,97 @@ const createGameAnalysisObjectId = (gameAnalysisId: string): Types.ObjectId | un
   return Types.ObjectId.isValid(gameAnalysisId) ? new Types.ObjectId(gameAnalysisId) : undefined;
 };
 
+const sanitizeExampleGameAnalysisIds = (
+  items: unknown,
+): Array<Record<string, unknown>> => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.map((item) => {
+    if (!isRecord(item)) {
+      return {};
+    }
+
+    const nextItem = { ...item };
+
+    if (Array.isArray(nextItem.examples)) {
+      nextItem.examples = nextItem.examples
+        .filter(isRecord)
+        .map((example) => {
+          const nextExample = { ...example };
+          const rawGameAnalysisId = nextExample.gameAnalysisId;
+
+          if (rawGameAnalysisId instanceof Types.ObjectId) {
+            return nextExample;
+          }
+
+          if (typeof rawGameAnalysisId === 'string') {
+            const objectId = createGameAnalysisObjectId(rawGameAnalysisId);
+
+            if (objectId) {
+              nextExample.gameAnalysisId = objectId;
+            } else {
+              delete nextExample.gameAnalysisId;
+            }
+          }
+
+          return nextExample;
+        });
+    }
+
+    return nextItem;
+  });
+};
+
+const sanitizeRecommendations = (
+  recommendations: Record<string, unknown>,
+): Record<string, unknown> => {
+  const allowedRecommendationTypes = new Set<string>(recommendationTypes);
+  const sanitizedRecommendations = { ...recommendations };
+
+  if (Array.isArray(sanitizedRecommendations.studyPlan)) {
+    sanitizedRecommendations.studyPlan = sanitizedRecommendations.studyPlan
+      .filter(isRecord)
+      .map((item) => {
+        const nextItem = { ...item };
+
+        if (
+          typeof nextItem.type === 'string' &&
+          !allowedRecommendationTypes.has(nextItem.type)
+        ) {
+          nextItem.type = 'routine';
+        }
+
+        return nextItem;
+      });
+  }
+
+  return sanitizedRecommendations;
+};
+
 const limitExamples = <TExample>(examples: TExample[], nextExample: TExample): TExample[] => {
   const trimmedExamples = examples.slice(0, MAX_EXAMPLES_PER_ITEM - 1);
 
   return [...trimmedExamples, nextExample];
+};
+
+const stampSkillMapTimestamps = (skillMap: Record<string, unknown>, timestamp: Date): void => {
+  if (!isRecord(skillMap.overallScore)) {
+    skillMap.overallScore = {};
+  }
+
+  (skillMap.overallScore as Record<string, unknown>).lastUpdatedAt = timestamp;
+
+  if (!isRecord(skillMap.categories)) {
+    return;
+  }
+
+  for (const value of Object.values(skillMap.categories)) {
+    if (isRecord(value)) {
+      value.lastUpdatedAt = timestamp;
+    }
+  }
 };
 
 const updateProfileConfidence = (profile: PlayerProfileDocument): void => {
@@ -362,6 +450,31 @@ export const updatePlayerProfileBasicInfo = async (
   mergeTopLevelPath(profile, 'trainingPreferences', validatedInput.trainingPreferences);
   mergeTopLevelPath(profile, 'identities', validatedInput.identities);
   mergeTopLevelPath(profile, 'ratings', validatedInput.ratings);
+
+  profile.lastProfileUpdateAt = new Date();
+
+  await profile.save();
+
+  return profile;
+};
+
+export const updateChessComUsername = async (
+  userId: string,
+  username: string,
+): Promise<PlayerProfileDocument> => {
+  const normalizedUsername = username.trim();
+
+  if (!normalizedUsername) {
+    throw new AppError('Chess.com username is required.', 400);
+  }
+
+  const profile = await getOrCreatePlayerProfile(userId);
+
+  mergeTopLevelPath(profile, 'identities', {
+    chessCom: {
+      username: normalizedUsername,
+    },
+  });
 
   profile.lastProfileUpdateAt = new Date();
 
@@ -498,4 +611,105 @@ export const applyGameSummaryToProfile = async (
     profile,
     delta,
   };
+};
+
+export const applyProfileDeltaToPlayerProfile = async (
+  userId: string,
+  profileDelta: unknown,
+): Promise<PlayerProfileDocument> => {
+  if (!isRecord(profileDelta)) {
+    throw new AppError('profileDelta must be an object.', 400);
+  }
+
+  const profile = await getOrCreatePlayerProfile(userId);
+  const now = new Date();
+
+  if (isRecord(profileDelta.skillMap)) {
+    const nextSkillMap = deepMerge(toPlainObject(profile.skillMap), profileDelta.skillMap);
+    stampSkillMapTimestamps(nextSkillMap, now);
+    profile.set('skillMap', nextSkillMap);
+  }
+
+  if (isRecord(profileDelta.playingStyle)) {
+    const nextPlayingStyle = deepMerge(
+      toPlainObject(profile.playingStyle),
+      profileDelta.playingStyle,
+    );
+    nextPlayingStyle.lastInferredAt = now;
+    profile.set('playingStyle', nextPlayingStyle);
+  }
+
+  if (isRecord(profileDelta.openingRepertoire)) {
+    profile.set(
+      'openingRepertoire',
+      deepMerge(toPlainObject(profile.openingRepertoire), profileDelta.openingRepertoire),
+    );
+  }
+
+  if (isRecord(profileDelta.chessStats)) {
+    profile.set('chessStats', deepMerge(toPlainObject(profile.chessStats), profileDelta.chessStats));
+  }
+
+  if (Array.isArray(profileDelta.recurringMistakes)) {
+    profile.set('recurringMistakes', sanitizeExampleGameAnalysisIds(profileDelta.recurringMistakes));
+  }
+
+  if (Array.isArray(profileDelta.strengths)) {
+    profile.set('strengths', sanitizeExampleGameAnalysisIds(profileDelta.strengths));
+  }
+
+  if (isRecord(profileDelta.recommendations)) {
+    const nextRecommendations = deepMerge(
+      toPlainObject(profile.recommendations),
+      sanitizeRecommendations(profileDelta.recommendations),
+    );
+    nextRecommendations.lastGeneratedAt = now;
+    profile.set('recommendations', nextRecommendations);
+  } else {
+    const nextRecommendations = toPlainObject(profile.recommendations);
+    nextRecommendations.lastGeneratedAt = now;
+    profile.set('recommendations', nextRecommendations);
+  }
+
+  if (isRecord(profileDelta.profileConfidence)) {
+    profile.set(
+      'profileConfidence',
+      deepMerge(toPlainObject(profile.profileConfidence), profileDelta.profileConfidence),
+    );
+  }
+
+  if (isRecord(profileDelta.decisionPatterns)) {
+    profile.set(
+      'decisionPatterns',
+      deepMerge(toPlainObject(profile.decisionPatterns), profileDelta.decisionPatterns),
+    );
+  }
+
+  if (isRecord(profileDelta.criticalPhaseWeakness)) {
+    profile.set(
+      'criticalPhaseWeakness',
+      deepMerge(toPlainObject(profile.criticalPhaseWeakness), profileDelta.criticalPhaseWeakness),
+    );
+  }
+
+  if (isRecord(profileDelta.estimatedStrengthSuggestion)) {
+    const nextRatings = deepMerge(toPlainObject(profile.ratings), {
+      estimatedStrength: profileDelta.estimatedStrengthSuggestion,
+    });
+    profile.set('ratings', nextRatings);
+  }
+
+  if (isRecord(profileDelta.improvementHistoryEntry)) {
+    profile.improvementHistory.push({
+      date: now,
+      ...(profileDelta.improvementHistoryEntry as Record<string, unknown>),
+    });
+    profile.markModified('improvementHistory');
+  }
+
+  profile.lastProfileUpdateAt = now;
+
+  await profile.save();
+
+  return profile;
 };

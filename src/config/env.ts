@@ -97,8 +97,40 @@ export const env = {
     100,
   ),
   tournamentsEnrichOnlyMissingDate: process.env.TOURNAMENTS_ENRICH_ONLY_MISSING_DATE !== 'false',
+  tournamentGlobalCronEnabled: parseBoolean(process.env.TOURNAMENT_GLOBAL_CRON_ENABLED, false),
+  tournamentScrapeMaxDetailsPerSearch: parsePositiveInteger(
+    process.env.TOURNAMENT_SCRAPE_MAX_DETAILS_PER_SEARCH,
+    30,
+  ),
+  tournamentScrapeRequestDelayMs: parsePositiveInteger(
+    process.env.TOURNAMENT_SCRAPE_REQUEST_DELAY_MS,
+    1000,
+  ),
+  tournamentCacheTtlHours: parsePositiveInteger(process.env.TOURNAMENT_CACHE_TTL_HOURS, 24),
   aiReviewWebhookUrl: process.env.AI_REVIEW_WEBHOOK_URL ?? '',
   aiReviewTimeoutMs: parsePositiveInteger(process.env.AI_REVIEW_TIMEOUT_MS, 60_000),
   aiReviewEnabled: process.env.AI_REVIEW_ENABLED === 'true',
   aiReviewMaxGamesPerRequest: parsePositiveInteger(process.env.AI_REVIEW_MAX_GAMES_PER_REQUEST, 3),
+  analysisBatchMaxGames: parsePositiveInteger(process.env.ANALYSIS_BATCH_MAX_GAMES, 50),
+  analysisBatchProcessConcurrency: parsePositiveInteger(
+    process.env.ANALYSIS_BATCH_PROCESS_CONCURRENCY,
+    1,
+  ),
+  profileUpdateWebhookUrl:
+    process.env.PROFILE_UPDATE_WEBHOOK_URL ?? process.env.PROFILE_EVIDENCE_WEBHOOK_URL ?? '',
+  profileUpdateEnabled:
+    process.env.PROFILE_UPDATE_ENABLED === 'true' ||
+    process.env.PROFILE_EVIDENCE_ENABLED === 'true',
+  profileUpdateTimeoutMs: parsePositiveInteger(
+    process.env.PROFILE_UPDATE_TIMEOUT_MS ?? process.env.PROFILE_EVIDENCE_TIMEOUT_MS,
+    120_000,
+  ),
+  profileUpdateApplyToPlayerProfile:
+    process.env.PROFILE_UPDATE_APPLY_TO_PLAYER_PROFILE === 'true',
+  profileEvidenceWebhookUrl: process.env.PROFILE_EVIDENCE_WEBHOOK_URL ?? '',
+  profileEvidenceEnabled: process.env.PROFILE_EVIDENCE_ENABLED === 'true',
+  profileEvidenceTimeoutMs: parsePositiveInteger(
+    process.env.PROFILE_EVIDENCE_TIMEOUT_MS,
+    120_000,
+  ),
 };

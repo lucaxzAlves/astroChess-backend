@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs';
 
 import { Request, Response } from 'express';
 
-import { env } from '../../config/env';
 import { analyzePgnGames } from './analysis.service';
 
 const getBodyKeys = (body: unknown): string[] => {
@@ -31,7 +30,6 @@ export const pingAnalysisRoute = (_request: Request, response: Response): Respon
   return response.status(200).json({
     status: 'analysis route alive',
     timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'unknown',
   });
 };
 
@@ -40,9 +38,6 @@ export const getStockfishHealth = (_request: Request, response: Response): Respo
 
   return response.status(200).json({
     stockfishPathConfigured: Boolean(stockfishPath),
-    stockfishPath: stockfishPath || null,
     stockfishExists: stockfishPath ? existsSync(stockfishPath) : false,
-    vercel: process.env.VERCEL === '1',
-    nodeEnv: env.nodeEnv,
   });
 };

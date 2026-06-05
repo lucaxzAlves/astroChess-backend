@@ -25,6 +25,8 @@ export type GameMetadata = {
   result?: string;
   site?: string;
   date?: string;
+  opening?: string;
+  eco?: string;
 };
 
 export type ParsedMove = {
@@ -51,10 +53,34 @@ export type NormalizedEvaluation = {
   evaluationType: 'cp' | 'mate';
 };
 
+export type SacrificeSignal = {
+  offeredPieceValue: number;
+  gainedPieceValue: number;
+  netOfferValue: number;
+  captureAvailable: boolean;
+  captureMove: string | null;
+  captureEval: number | null;
+  currentEval: number;
+  acceptedSacrifice: boolean;
+  offeredSacrifice: boolean;
+};
+
 export type MoveClassificationResult = {
   classification: MoveClassification;
   symbol: MoveAnnotationSymbol;
   evalLoss: number | null;
+  expectedBefore: number;
+  expectedAfter: number;
+  expectedLoss: number;
+  expectedPointsLoss: number;
+  centipawnLoss: number | null;
+  bestExpectedAfter: number;
+  playedExpectedAfter: number;
+  missLoss: number;
+  isBook: boolean;
+  isOnlyMove: boolean;
+  isSacrifice: boolean;
+  isCritical: boolean;
   comment: string;
   reasonTags: string[];
   shouldAnnotate: boolean;
@@ -66,6 +92,14 @@ export type ClassificationDebug = {
   bestPlayerEval: number;
   playedPlayerEval: number;
   evalLoss: number | null;
+  expectedBefore: number;
+  expectedAfter: number;
+  expectedLoss: number;
+  expectedPointsLoss: number;
+  centipawnLoss: number | null;
+  bestExpectedAfter: number;
+  playedExpectedAfter: number;
+  missLoss: number;
   missedGain: number;
   positionContext: PositionContext;
   thresholdsUsed: {
@@ -80,12 +114,25 @@ export type ClassificationDebug = {
 };
 
 export type AnalyzedMove = ParsedMove & {
+  sacrificeSignal?: SacrificeSignal;
   before?: StockfishAnalysis;
   after?: StockfishAnalysis;
   normalizedBefore: NormalizedEvaluation;
   normalizedAfter: NormalizedEvaluation;
   evalBefore: number | string;
   evalAfter: number | string;
+  expectedBefore: number;
+  expectedAfter: number;
+  expectedLoss: number;
+  expectedPointsLoss: number;
+  centipawnLoss: number | null;
+  bestExpectedAfter: number;
+  playedExpectedAfter: number;
+  missLoss: number;
+  isBook: boolean;
+  isOnlyMove: boolean;
+  isSacrifice: boolean;
+  isCritical: boolean;
   bestMove?: string;
   bestMoveUci?: string;
   classification: MoveClassification;
@@ -112,6 +159,18 @@ export type PublicAnalyzedMove = Pick<
   | 'fenAfter'
   | 'evalBefore'
   | 'evalAfter'
+  | 'expectedBefore'
+  | 'expectedAfter'
+  | 'expectedLoss'
+  | 'expectedPointsLoss'
+  | 'centipawnLoss'
+  | 'bestExpectedAfter'
+  | 'playedExpectedAfter'
+  | 'missLoss'
+  | 'isBook'
+  | 'isOnlyMove'
+  | 'isSacrifice'
+  | 'isCritical'
   | 'evalLoss'
   | 'bestMove'
   | 'classification'
@@ -132,6 +191,21 @@ export type MoveClassificationItem = {
   critical: boolean;
   moveAccuracy?: number;
   evalLoss?: number | null;
+  evalBefore?: number | string;
+  evalAfter?: number | string;
+  expectedBefore?: number;
+  expectedAfter?: number;
+  expectedLoss?: number;
+  expectedPointsLoss?: number;
+  centipawnLoss?: number | null;
+  bestExpectedAfter?: number;
+  playedExpectedAfter?: number;
+  missLoss?: number;
+  isBook?: boolean;
+  isOnlyMove?: boolean;
+  isSacrifice?: boolean;
+  isCritical?: boolean;
+  reasonTags?: string[];
 };
 
 export type AccuracyByColor = {
@@ -178,6 +252,18 @@ export type CriticalMoment = {
   evalBefore: number | string;
   evalAfter: number | string;
   evalLoss: number | null;
+  expectedBefore: number;
+  expectedAfter: number;
+  expectedLoss: number;
+  expectedPointsLoss: number;
+  centipawnLoss: number | null;
+  bestExpectedAfter: number;
+  playedExpectedAfter: number;
+  missLoss: number;
+  isBook: boolean;
+  isOnlyMove: boolean;
+  isSacrifice: boolean;
+  isCritical: boolean;
   fenBefore: string;
   fenAfter: string;
   pv: string[];
@@ -191,6 +277,7 @@ export type GameAnalysis = {
   accuracy: AccuracyByColor;
   accuracyDetails: AccuracyDetailsByColor;
   moveClassificationSummary: MoveClassificationSummary;
+  classificationDebugSummary?: MoveClassificationSummary;
   moveClassifications: MoveClassificationItem[];
   criticalMoments: CriticalMoment[];
   analyzedMoves: PublicAnalyzedMove[];

@@ -13,7 +13,7 @@ export const storedMoveClassifications = [
   'mistake',
   'miss',
   'blunder',
-  'Unknown',
+  'unknown',
 ] as const;
 export const decisiveMomentCategories = [
   'hanging_piece',
@@ -94,7 +94,14 @@ export const trainingTypes = [
   'calculation',
   'strategy',
 ] as const;
-export const recommendationTypes = ['book', 'course', 'video', 'puzzle_set', 'routine'] as const;
+export const recommendationTypes = [
+  'book',
+  'course',
+  'video',
+  'puzzle_set',
+  'routine',
+  'annotated_games',
+] as const;
 export const recommendationPriorities = ['low', 'medium', 'high'] as const;
 export const analysisStatuses = [
   'technical_completed',
@@ -150,6 +157,7 @@ export type GameAnalysisMetadata = {
 };
 
 export type CriticalMoment = {
+  ply?: number;
   moveNumber?: number;
   color?: CriticalMomentColor;
   playedMove?: string;
@@ -167,6 +175,16 @@ export type CriticalMoment = {
 
 export type StructuredGameSummary = {
   gameNarrative?: string;
+  victoryConstruction?: {
+    summary?: string;
+    keyPreparatoryMoves?: Array<{
+      moveNumber?: number | null;
+      move?: string | null;
+      side?: CriticalMomentColor;
+      idea?: string;
+    }>;
+    mainStrategicCause?: string;
+  };
   decisiveMoment?: {
     moveNumber?: number | null;
     playedMove?: string | null;
@@ -221,6 +239,63 @@ export type StoredAiReview = {
   reviewText?: string;
   rawResponse?: unknown;
   error?: string;
+};
+
+export type StoredGameEvidenceSummary = Record<string, unknown>;
+
+export type StoredTargetPlayer = {
+  username?: string;
+  color?: CriticalMomentColor;
+  platform?: 'chess.com' | 'lichess' | 'manual' | 'unknown';
+};
+
+export type StoredAccuracyByColor = {
+  white?: number;
+  black?: number;
+};
+
+export type StoredMoveClassificationSummaryEntry = {
+  brilliant?: number;
+  great?: number;
+  best?: number;
+  excellent?: number;
+  good?: number;
+  book?: number;
+  inaccuracy?: number;
+  mistake?: number;
+  miss?: number;
+  blunder?: number;
+};
+
+export type StoredMoveClassificationSummary = {
+  white?: StoredMoveClassificationSummaryEntry;
+  black?: StoredMoveClassificationSummaryEntry;
+};
+
+export type StoredMoveClassificationItem = {
+  ply: number;
+  moveNumber: number;
+  color: 'white' | 'black';
+  san: string;
+  classification: StoredMoveClassification;
+  critical: boolean;
+  moveAccuracy?: number;
+  evalLoss?: number | null;
+  evalBefore?: number | string;
+  evalAfter?: number | string;
+  expectedBefore?: number;
+  expectedAfter?: number;
+  expectedLoss?: number;
+  expectedPointsLoss?: number;
+  centipawnLoss?: number | null;
+  bestExpectedAfter?: number;
+  playedExpectedAfter?: number;
+  missLoss?: number;
+  isBook?: boolean;
+  isOnlyMove?: boolean;
+  isSacrifice?: boolean;
+  isCritical?: boolean;
+  reasonTags?: string[];
 };
 
 export type OpeningProfile = {
@@ -515,14 +590,21 @@ export type CriticalPhaseWeakness = {
 
 export type GameAnalysisRecord = {
   userId: Types.ObjectId;
+  batchId?: Types.ObjectId;
   gameId?: string;
   source: GameAnalysisSource;
+  targetPlayer?: StoredTargetPlayer;
   metadata?: GameAnalysisMetadata;
   originalPgn: string;
   annotatedPgn: string;
+  accuracy?: StoredAccuracyByColor;
+  moveClassificationSummary?: StoredMoveClassificationSummary;
+  classificationDebugSummary?: StoredMoveClassificationSummary;
+  moveClassifications?: StoredMoveClassificationItem[];
   criticalMoments: CriticalMoment[];
   aiReview: StoredAiReview;
-  structuredSummary?: StructuredGameSummary;
+  gameEvidenceSummary?: StoredGameEvidenceSummary;
+  structuredSummary?: StructuredGameSummary | Record<string, unknown>;
   analysisStatus: GameAnalysisStatus;
   createdAt: Date;
   updatedAt: Date;
