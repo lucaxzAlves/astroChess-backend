@@ -27,6 +27,7 @@ const roundPlanSchema = new Schema(
     accuracy: { type: Number, default: 0 },
     averageSolveTimeSeconds: { type: Number, default: 0 },
     startedAt: { type: Date },
+    endsAt: { type: Date },
     completedAt: { type: Date },
   },
   { _id: false },
@@ -48,6 +49,9 @@ const patternForgeCycleSchema = new Schema<PatternForgeCycleDocument>(
       default: 'active',
       index: true,
     },
+    timezone: { type: String, default: 'America/Sao_Paulo', trim: true },
+    startedAt: { type: Date, default: Date.now },
+    lastSessionLocalDate: { type: String, trim: true },
     patternSet: {
       puzzleCount: { type: Number, required: true },
       themes: { type: [String], default: [] },

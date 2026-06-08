@@ -76,6 +76,7 @@ export type PatternForgeRoundPlan = {
   accuracy?: number;
   averageSolveTimeSeconds?: number;
   startedAt?: Date;
+  endsAt?: Date;
   completedAt?: Date;
 };
 
@@ -104,6 +105,9 @@ export type PatternForgeCycleRecord = {
   username: string;
   source: 'pattern_forge';
   status: PatternForgeStatus;
+  timezone: string;
+  startedAt: Date;
+  lastSessionLocalDate?: string;
   patternSet: PatternForgeCyclePatternSet;
   repetitionPlan: {
     compressionPreset?: string;
@@ -141,11 +145,14 @@ export type PatternForgeDailySessionRecord = {
   cycleId: Types.ObjectId;
   userId: Types.ObjectId;
   date: Date;
+  localDate: string;
+  timezone: string;
   round: number;
   dailyTarget: number;
   targetPuzzles: number;
   puzzleIds: Types.ObjectId[];
   completedPuzzleIds: Types.ObjectId[];
+  currentPuzzleIndex: number;
   correctCount: number;
   wrongCount: number;
   skippedCount: number;
@@ -196,6 +203,7 @@ export type PatternForgeCycleConfigInput = {
   includePersonalWeaknesses?: boolean;
   minRating?: number;
   maxRating?: number;
+  timezone?: string;
 };
 
 export type CreatePatternForgeCycleBody = {
@@ -248,6 +256,7 @@ export type PatternForgeAttemptResult = {
   puzzle: PatternForgePuzzlePublic;
   sessionProgress: {
     completed: number;
+    currentPuzzleIndex: number;
     dailyTarget: number;
     targetPuzzles: number;
     correctCount: number;
@@ -265,6 +274,22 @@ export type PatternForgeAttemptResult = {
     roundAccuracy: number;
     roundAverageSolveTimeSeconds: number;
   };
+};
+
+export type PatternForgeCalendarProgress = {
+  timezone: string;
+  localDate: string;
+  currentDay: number;
+  targetDays: number;
+  daysRemaining: number;
+  missedDays: number;
+  completedSessionDays: number;
+  isBehindSchedule: boolean;
+  originalDailyTarget: number;
+  requiredDailyPace: number;
+  roundStartedAt: Date | null;
+  roundEndsAt: Date | null;
+  roundCompletedAt: Date | null;
 };
 
 export type ImportPuzzleCsvRow = {

@@ -7,6 +7,8 @@ const patternForgeDailySessionSchema = new Schema<PatternForgeDailySessionDocume
     cycleId: { type: Types.ObjectId, ref: 'PatternForgeCycle', required: true, index: true },
     userId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
     date: { type: Date, required: true, index: true },
+    localDate: { type: String, required: true, trim: true, index: true },
+    timezone: { type: String, default: 'America/Sao_Paulo', trim: true },
     round: { type: Number, required: true },
     dailyTarget: { type: Number, required: true },
     targetPuzzles: { type: Number, required: true },
@@ -18,6 +20,7 @@ const patternForgeDailySessionSchema = new Schema<PatternForgeDailySessionDocume
       type: [{ type: Types.ObjectId, ref: 'Puzzle' }],
       default: [],
     },
+    currentPuzzleIndex: { type: Number, default: 0 },
     correctCount: { type: Number, default: 0 },
     wrongCount: { type: Number, default: 0 },
     skippedCount: { type: Number, default: 0 },
@@ -33,7 +36,7 @@ const patternForgeDailySessionSchema = new Schema<PatternForgeDailySessionDocume
   { timestamps: { createdAt: true, updatedAt: false } },
 );
 
-patternForgeDailySessionSchema.index({ cycleId: 1, round: 1, date: 1 }, { unique: true });
+patternForgeDailySessionSchema.index({ cycleId: 1, round: 1, localDate: 1 }, { unique: true });
 
 export const PatternForgeDailySession: Model<PatternForgeDailySessionDocument> =
   models.PatternForgeDailySession ??

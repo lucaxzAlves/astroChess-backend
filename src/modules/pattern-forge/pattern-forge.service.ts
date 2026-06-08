@@ -20,6 +20,7 @@ import type {
   NormalizedPuzzleDifficulty,
   PatternForgeAttemptDocument,
   PatternForgeAttemptResult,
+  PatternForgeCalendarProgress,
   PatternForgeCycleConfigInput,
   PatternForgeCycleDocument,
   PatternForgeDerivedThemes,
@@ -32,6 +33,7 @@ import type {
 } from './pattern-forge.types';
 
 const MIN_POPULARITY_THRESHOLD = -100;
+const DEFAULT_PATTERN_FORGE_TIMEZONE = 'America/Sao_Paulo';
 const SLOW_SOLVE_THRESHOLD_SECONDS: Record<NormalizedPuzzleDifficulty, number> = {
   beginner: 75,
   intermediate: 90,
@@ -57,6 +59,69 @@ const normalizeText = (value: string): string =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
+
+const sanitizeTimezone = (value: unknown): string => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return DEFAULT_PATTERN_FORGE_TIMEZONE;
+  }
+
+  const timezone = value.trim();
+
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
+    return timezone;
+  } catch {
+    return DEFAULT_PATTERN_FORGE_TIMEZONE;
+  }
+};
+
+const getLocalDateString = (
+  date = new Date(),
+  timezone = DEFAULT_PATTERN_FORGE_TIMEZONE,
+): string => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+
+  if (!year || !month || !day) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  return `${year}-${month}-${day}`;
+};
+
+const localDateToUtcDate = (localDate: string): Date => new Date(`${localDate}T00:00:00.000Z`);
+
+const addDaysToLocalDate = (localDate: string, days: number): string => {
+  const date = localDateToUtcDate(localDate);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const diffLocalDateDays = (fromLocalDate: string, toLocalDate: string): number => {
+  const from = localDateToUtcDate(fromLocalDate).getTime();
+  const to = localDateToUtcDate(toLocalDate).getTime();
+
+  return Math.floor((to - from) / 86_400_000);
+};
+
+const getRoundStartLocalDate = (
+  cycle: PatternForgeCycleDocument,
+  roundPlan: PatternForgeRoundPlan,
+  timezone: string,
+): string => getLocalDateString(roundPlan.startedAt ?? cycle.startedAt ?? cycle.createdAt ?? new Date(), timezone);
+
+const getRoundEndLocalDate = (
+  cycle: PatternForgeCycleDocument,
+  roundPlan: PatternForgeRoundPlan,
+  timezone: string,
+): string => addDaysToLocalDate(getRoundStartLocalDate(cycle, roundPlan, timezone), roundPlan.targetDays - 1);
 
 const unique = <TValue>(values: TValue[]): TValue[] => Array.from(new Set(values));
 
@@ -135,12 +200,6 @@ const deterministicScore = (input: string): number => {
   }
 
   return hash;
-};
-
-const startOfToday = (): Date => {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
 };
 
 const uniqueObjectIds = (values: Types.ObjectId[]): Types.ObjectId[] => {
@@ -630,6 +689,7 @@ const validateCreateCycleBody = (body: unknown): CreatePatternForgeCycleBody => 
         body.config.minRating !== undefined ? Number(body.config.minRating) : undefined,
       maxRating:
         body.config.maxRating !== undefined ? Number(body.config.maxRating) : undefined,
+      timezone: sanitizeTimezone(body.config.timezone),
     },
   };
 };
@@ -769,50 +829,154 @@ const getCurrentRoundPlan = (cycle: PatternForgeCycleDocument): PatternForgeRoun
   return roundPlan;
 };
 
+const ensureRoundCalendar = (
+  cycle: PatternForgeCycleDocument,
+  roundPlan: PatternForgeRoundPlan,
+  startLocalDate?: string,
+): void => {
+  const timezone = sanitizeTimezone(cycle.timezone);
+  const resolvedStartLocalDate =
+    startLocalDate || getRoundStartLocalDate(cycle, roundPlan, timezone);
+
+  roundPlan.startedAt = roundPlan.startedAt ?? localDateToUtcDate(resolvedStartLocalDate);
+  roundPlan.endsAt =
+    roundPlan.endsAt ??
+    localDateToUtcDate(addDaysToLocalDate(resolvedStartLocalDate, roundPlan.targetDays - 1));
+};
+
+const getCalendarDayNumber = (
+  cycle: PatternForgeCycleDocument,
+  roundPlan: PatternForgeRoundPlan,
+  localDate: string,
+): number => {
+  const timezone = sanitizeTimezone(cycle.timezone);
+  const startLocalDate = getRoundStartLocalDate(cycle, roundPlan, timezone);
+
+  return Math.min(
+    roundPlan.targetDays,
+    Math.max(1, diffLocalDateDays(startLocalDate, localDate) + 1),
+  );
+};
+
+const buildCalendarProgress = async (
+  cycle: PatternForgeCycleDocument,
+  localDate = getLocalDateString(new Date(), sanitizeTimezone(cycle.timezone)),
+): Promise<PatternForgeCalendarProgress> => {
+  const timezone = sanitizeTimezone(cycle.timezone);
+  const roundPlan = getCurrentRoundPlan(cycle);
+  ensureRoundCalendar(cycle, roundPlan);
+
+  const roundEndLocalDate = getRoundEndLocalDate(cycle, roundPlan, timezone);
+  const currentDay = getCalendarDayNumber(cycle, roundPlan, localDate);
+  const daysRemaining = Math.max(0, diffLocalDateDays(localDate, roundEndLocalDate) + 1);
+  const roundSessions = await getRoundSessions(cycle._id, roundPlan.round);
+  const completedInRound = await getCompletedPuzzleIdsInRound(cycle, roundPlan.round);
+  const productivePreviousDays = new Set(
+    roundSessions
+      .filter((session) => {
+        const sessionLocalDate = session.localDate || getLocalDateString(session.date, timezone);
+        return sessionLocalDate < localDate && session.completedPuzzleIds.length > 0;
+      })
+      .map((session) => session.localDate || getLocalDateString(session.date, timezone)),
+  ).size;
+  const completedSessionDays = new Set(
+    roundSessions
+      .filter((session) => session.completedPuzzleIds.length > 0)
+      .map((session) => session.localDate || getLocalDateString(session.date, timezone)),
+  ).size;
+  const missedDays = Math.max(0, currentDay - 1 - productivePreviousDays);
+  const remainingPuzzles = Math.max(0, cycle.puzzleIds.length - completedInRound.size);
+  const requiredDailyPace =
+    daysRemaining > 0 ? Math.max(0, Math.ceil(remainingPuzzles / daysRemaining)) : remainingPuzzles;
+
+  return {
+    timezone,
+    localDate,
+    currentDay,
+    targetDays: roundPlan.targetDays,
+    daysRemaining,
+    missedDays,
+    completedSessionDays,
+    isBehindSchedule: requiredDailyPace > roundPlan.dailyTarget,
+    originalDailyTarget: roundPlan.dailyTarget,
+    requiredDailyPace,
+    roundStartedAt: roundPlan.startedAt ?? null,
+    roundEndsAt: roundPlan.endsAt ?? null,
+    roundCompletedAt: roundPlan.completedAt ?? null,
+  };
+};
+
 const getOrCreateTodaySession = async (
   cycle: PatternForgeCycleDocument,
 ): Promise<PatternForgeDailySessionDocument> => {
-  const today = startOfToday();
+  cycle.timezone = sanitizeTimezone(cycle.timezone);
+  const localDate = getLocalDateString(new Date(), cycle.timezone);
+  const today = localDateToUtcDate(localDate);
   const currentRound = cycle.repetitionPlan.currentRound;
+  const roundPlan = getCurrentRoundPlan(cycle);
+  ensureRoundCalendar(cycle, roundPlan);
   const existingSession = await PatternForgeDailySession.findOne({
     cycleId: cycle._id,
-    date: today,
     round: currentRound,
+    $or: [{ localDate }, { date: today }],
   }).exec();
 
   if (existingSession) {
-    cycle.progress.currentDay = await PatternForgeDailySession.countDocuments({
-      cycleId: cycle._id,
-      round: currentRound,
-    }).exec();
+    existingSession.date = today;
+    existingSession.localDate = existingSession.localDate || localDate;
+    existingSession.timezone = existingSession.timezone || cycle.timezone;
+    existingSession.currentPuzzleIndex = Math.min(
+      existingSession.completedPuzzleIds.length,
+      existingSession.targetPuzzles,
+    );
+    await existingSession.save();
+    const calendarProgress = await buildCalendarProgress(cycle, localDate);
+    cycle.progress.currentDay = calendarProgress.currentDay;
+    cycle.lastSessionLocalDate = localDate;
+    await cycle.save();
     return existingSession;
   }
 
-  const roundPlan = getCurrentRoundPlan(cycle);
   const existingRoundSessionsCount = await PatternForgeDailySession.countDocuments({
     cycleId: cycle._id,
     round: currentRound,
   }).exec();
+  const calendarProgress = await buildCalendarProgress(cycle, localDate);
   const scheduledInRound = await getScheduledPuzzleIdsInRound(cycle, currentRound);
+  const completedInRound = await getCompletedPuzzleIdsInRound(cycle, currentRound);
+  const remainingUniqueInRound = Math.max(0, cycle.puzzleIds.length - scheduledInRound.size);
+  const isMistakeReviewOnly =
+    remainingUniqueInRound === 0 &&
+    cycle.rules.endRoundWithMistakeReview &&
+    cycle.mistakeQueue.length > 0;
   const queueCandidates = cycle.rules.prioritizeWeaknesses
     ? cycle.mistakeQueue.filter(
-        (entry) => !scheduledInRound.has(entry.puzzleId.toString()),
+        (entry) => isMistakeReviewOnly || !scheduledInRound.has(entry.puzzleId.toString()),
       )
     : [];
   const queuePuzzleIds = uniqueObjectIds(queueCandidates.map((entry) => entry.puzzleId));
-  const remainingUniqueInRound = Math.max(0, cycle.puzzleIds.length - scheduledInRound.size);
-  const baseTargetPuzzles = Math.min(roundPlan.dailyTarget, remainingUniqueInRound || cycle.puzzleIds.length);
+  const availableForSession = isMistakeReviewOnly
+    ? queuePuzzleIds.length
+    : remainingUniqueInRound || cycle.puzzleIds.length;
+  const remainingBasePuzzles = Math.max(0, cycle.puzzleIds.length - completedInRound.size);
+  const adjustedDailyTarget =
+    calendarProgress.daysRemaining > 0
+      ? Math.max(roundPlan.dailyTarget, Math.ceil(remainingBasePuzzles / calendarProgress.daysRemaining))
+      : Math.max(roundPlan.dailyTarget, remainingBasePuzzles);
+  const baseTargetPuzzles = Math.min(adjustedDailyTarget, availableForSession);
   const sessionCapacity = Math.min(
-    remainingUniqueInRound || cycle.puzzleIds.length,
+    availableForSession,
     Math.max(baseTargetPuzzles, roundPlan.dailyTarget * 2),
   );
   const targetPuzzles = Math.max(baseTargetPuzzles, sessionCapacity);
   const selectedPuzzleIds: Types.ObjectId[] = queuePuzzleIds.slice(0, targetPuzzles);
-  const freshCandidates = getRotatedPuzzleIdsForDay(cycle, existingRoundSessionsCount).filter(
-    (puzzleId) =>
-      !scheduledInRound.has(puzzleId.toString()) &&
-      !selectedPuzzleIds.some((selectedPuzzleId) => selectedPuzzleId.toString() === puzzleId.toString()),
-  );
+  const freshCandidates = isMistakeReviewOnly
+    ? []
+    : getRotatedPuzzleIdsForDay(cycle, existingRoundSessionsCount).filter(
+        (puzzleId) =>
+          !scheduledInRound.has(puzzleId.toString()) &&
+          !selectedPuzzleIds.some((selectedPuzzleId) => selectedPuzzleId.toString() === puzzleId.toString()),
+      );
 
   for (const puzzleId of freshCandidates) {
     if (selectedPuzzleIds.length >= targetPuzzles) {
@@ -822,7 +986,7 @@ const getOrCreateTodaySession = async (
     selectedPuzzleIds.push(puzzleId);
   }
 
-  if (selectedPuzzleIds.length < targetPuzzles) {
+  if (!isMistakeReviewOnly && selectedPuzzleIds.length < targetPuzzles) {
     for (const puzzleId of cycle.puzzleIds) {
       if (selectedPuzzleIds.length >= targetPuzzles) {
         break;
@@ -841,11 +1005,14 @@ const getOrCreateTodaySession = async (
     cycleId: cycle._id,
     userId: cycle.userId,
     date: today,
+    localDate,
+    timezone: cycle.timezone,
     round: currentRound,
     dailyTarget: baseTargetPuzzles,
     targetPuzzles: selectedPuzzleIds.length,
     puzzleIds: selectedPuzzleIds,
     completedPuzzleIds: [],
+    currentPuzzleIndex: 0,
     correctCount: 0,
     wrongCount: 0,
     skippedCount: 0,
@@ -861,9 +1028,10 @@ const getOrCreateTodaySession = async (
     }
   }
 
-  cycle.progress.currentDay = existingRoundSessionsCount + 1;
+  cycle.progress.currentDay = calendarProgress.currentDay;
   cycle.progress.completedToday = 0;
   cycle.progress.mistakesQueued = cycle.mistakeQueue.length;
+  cycle.lastSessionLocalDate = localDate;
   await cycle.save();
 
   return session;
@@ -887,12 +1055,17 @@ const ensureCycleOwnership = (
 const buildTodaySessionResponse = async (cycle: PatternForgeCycleDocument) => {
   const todaySession = await getOrCreateTodaySession(cycle);
   const puzzles = (await getOrderedPuzzlesForSession(todaySession)).map(toPuzzlePublic);
+  const calendarProgress = await buildCalendarProgress(
+    cycle,
+    todaySession.localDate || getLocalDateString(todaySession.date, sanitizeTimezone(cycle.timezone)),
+  );
 
   return {
     cycle,
     todaySession,
     puzzles,
     themeReasons: cycle.patternSet.themeReasons,
+    calendarProgress,
   };
 };
 
@@ -923,11 +1096,28 @@ export const createPatternForgeCycle = async (userId: string, body: unknown) => 
   });
 
   const firstRound = config.rounds[0];
+  const timezone = sanitizeTimezone(config.timezone);
+  const cycleStartedAt = new Date();
+  const firstRoundStartLocalDate = getLocalDateString(cycleStartedAt, timezone);
+  const configuredRounds = config.rounds.map((round, index) => {
+    if (index !== 0) return round;
+
+    return {
+      ...round,
+      status: 'active' as const,
+      startedAt: localDateToUtcDate(firstRoundStartLocalDate),
+      endsAt: localDateToUtcDate(addDaysToLocalDate(firstRoundStartLocalDate, round.targetDays - 1)),
+    };
+  });
+
   const cycle = await PatternForgeCycle.create({
     userId: ensureObjectId(userId, 'user id'),
     username: resolvedUsername,
     source: 'pattern_forge',
     status: 'active',
+    timezone,
+    startedAt: cycleStartedAt,
+    lastSessionLocalDate: firstRoundStartLocalDate,
     patternSet: {
       puzzleCount: config.puzzleCount,
       themes: generatedSet.mergedThemes,
@@ -942,7 +1132,7 @@ export const createPatternForgeCycle = async (userId: string, body: unknown) => 
     },
     repetitionPlan: {
       compressionPreset: config.compressionPreset,
-      rounds: config.rounds,
+      rounds: configuredRounds,
       currentRound: firstRound.round,
     },
     rules: config.rules,
@@ -961,7 +1151,7 @@ export const createPatternForgeCycle = async (userId: string, body: unknown) => 
     },
   });
 
-  const { todaySession, puzzles, themeReasons } = await buildTodaySessionResponse(cycle);
+  const { todaySession, puzzles, themeReasons, calendarProgress } = await buildTodaySessionResponse(cycle);
 
   return {
     success: true,
@@ -969,6 +1159,7 @@ export const createPatternForgeCycle = async (userId: string, body: unknown) => 
     todaySession,
     puzzles,
     themeReasons,
+    calendarProgress,
   };
 };
 
@@ -988,10 +1179,11 @@ export const getActivePatternForgeCycle = async (userId: string, username?: stri
       todaySession: null,
       puzzles: [],
       themeReasons: [],
+      calendarProgress: null,
     };
   }
 
-  const { todaySession, puzzles, themeReasons } = await buildTodaySessionResponse(cycle);
+  const { todaySession, puzzles, themeReasons, calendarProgress } = await buildTodaySessionResponse(cycle);
 
   return {
     success: true,
@@ -999,6 +1191,7 @@ export const getActivePatternForgeCycle = async (userId: string, username?: stri
     todaySession,
     puzzles,
     themeReasons,
+    calendarProgress,
   };
 };
 
@@ -1011,6 +1204,7 @@ const updateSessionMetrics = async (
   const completedCount = session.completedPuzzleIds.length;
   const correctCount = session.correctCount;
 
+  session.currentPuzzleIndex = Math.min(completedCount, session.targetPuzzles);
   session.accuracy =
     totalAttempts > 0 ? Number(((correctCount / totalAttempts) * 100).toFixed(2)) : 0;
   session.averageSolveTimeSeconds =
@@ -1109,6 +1303,8 @@ const updateSessionMetrics = async (
       );
 
       if (nextRound) {
+        const timezone = sanitizeTimezone(cycle.timezone);
+        const nextRoundStartLocalDate = getLocalDateString(new Date(), timezone);
         cycle.repetitionPlan.currentRound = nextRound.round;
         cycle.progress.currentRound = nextRound.round;
         cycle.progress.currentDay = 0;
@@ -1116,7 +1312,10 @@ const updateSessionMetrics = async (
         cycle.progress.roundAccuracy = 0;
         cycle.progress.roundAverageSolveTimeSeconds = 0;
         nextRound.status = 'active';
-        nextRound.startedAt = nextRound.startedAt ?? new Date();
+        nextRound.startedAt = nextRound.startedAt ?? localDateToUtcDate(nextRoundStartLocalDate);
+        nextRound.endsAt =
+          nextRound.endsAt ??
+          localDateToUtcDate(addDaysToLocalDate(nextRoundStartLocalDate, nextRound.targetDays - 1));
       } else {
         cycle.status = 'completed';
       }
@@ -1239,6 +1438,7 @@ export const submitPatternForgeAttempt = async (
       puzzle: toPuzzlePublic(puzzle),
       sessionProgress: {
         completed: session.completedPuzzleIds.length,
+        currentPuzzleIndex: session.currentPuzzleIndex,
         dailyTarget: session.dailyTarget,
         targetPuzzles: session.targetPuzzles,
         correctCount: session.correctCount,
