@@ -30,8 +30,6 @@ const openingExplorerCacheSchema = new Schema<OpeningExplorerCacheDocument>(
   },
 );
 
-openingExplorerCacheSchema.index({ playerId: 1 }, { unique: true });
-openingExplorerCacheSchema.index({ dirty: 1 });
 openingExplorerCacheSchema.index({ updatedAt: -1 });
 
 export const OpeningExplorerCache: Model<OpeningExplorerCacheDocument> =

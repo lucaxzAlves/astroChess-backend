@@ -78,8 +78,31 @@ const severityRank = {
   critical: 4,
 } as const;
 
+const fetchChessComAvatarUrl = async (username: string): Promise<string | undefined> => {
+  try {
+    const response = await fetch(
+      `https://api.chess.com/pub/player/${encodeURIComponent(username.toLowerCase())}`,
+    );
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const payload = (await response.json()) as { avatar?: unknown };
+    return typeof payload.avatar === 'string' && payload.avatar.trim()
+      ? payload.avatar.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const isMergeableRecord = (value: unknown): value is Record<string, unknown> => {
+  return isRecord(value) && !(value instanceof Date);
 };
 
 const normalizeKey = (value: string): string => {
@@ -131,7 +154,7 @@ const deepMerge = (
       continue;
     }
 
-    if (isRecord(value) && isRecord(result[key])) {
+    if (isMergeableRecord(value) && isMergeableRecord(result[key])) {
       result[key] = deepMerge(result[key] as Record<string, unknown>, value);
       continue;
     }
@@ -469,10 +492,13 @@ export const updateChessComUsername = async (
   }
 
   const profile = await getOrCreatePlayerProfile(userId);
+  const avatarUrl = await fetchChessComAvatarUrl(normalizedUsername);
 
   mergeTopLevelPath(profile, 'identities', {
     chessCom: {
       username: normalizedUsername,
+      ...(avatarUrl ? { avatarUrl } : {}),
+      lastSyncedAt: new Date(),
     },
   });
 

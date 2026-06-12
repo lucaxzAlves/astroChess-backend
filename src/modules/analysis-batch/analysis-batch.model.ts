@@ -115,11 +115,10 @@ const analysisBatchSchema = new Schema<AnalysisBatchDocument>(
   analysisBatchSchemaDefinition,
   {
     timestamps: true,
+    suppressReservedKeysWarning: true,
   },
 );
 
-analysisBatchSchema.index({ userId: 1 });
-analysisBatchSchema.index({ status: 1 });
 analysisBatchSchema.index({ createdAt: -1 });
 
 export const AnalysisBatch: Model<AnalysisBatchDocument> =

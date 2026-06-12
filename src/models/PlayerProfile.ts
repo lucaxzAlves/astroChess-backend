@@ -117,6 +117,7 @@ const playerProfileSchema = new Schema<PlayerProfileDocument>(
     identities: {
       chessCom: {
         username: { type: String, trim: true },
+        avatarUrl: { type: String, trim: true },
         lastSyncedAt: { type: Date },
       },
       lichess: {

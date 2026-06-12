@@ -148,18 +148,9 @@ const masterReplayGameSchema = new Schema<MasterReplayGameDocument>(
   { timestamps: true },
 );
 
-masterReplayGameSchema.index({ slug: 1 }, { unique: true });
-masterReplayGameSchema.index({ status: 1 });
-masterReplayGameSchema.index({ category: 1 });
-masterReplayGameSchema.index({ difficulty: 1 });
-masterReplayGameSchema.index({ tags: 1 });
-masterReplayGameSchema.index({ 'players.white': 1 });
-masterReplayGameSchema.index({ 'players.black': 1 });
-masterReplayGameSchema.index({ order: 1 });
 masterReplayGameSchema.index({ 'annotatedMoves.ply': 1 });
 masterReplayGameSchema.index({ 'keyMoments.ply': 1 });
 
 export const MasterReplayGame: Model<MasterReplayGameDocument> =
   models.MasterReplayGame ??
   model<MasterReplayGameDocument>('MasterReplayGame', masterReplayGameSchema);
-

@@ -7,12 +7,30 @@ import { buildAgentOneProfileSummary } from '../profile-evidence/profile-evidenc
 import { inferTargetPlayerColor, saveGameAnalysis } from '../game-analysis/game-analysis.service';
 import { executeBatchProfileUpdate } from './analysis-batch-profile-update.service';
 
+const MAX_RETRIES_PER_GAME = 2;
+
 type ProcessAnalysisBatchInput = {
   batchId: string;
   userId: string;
   games: AnalysisBatchGameInput[];
   options: AnalysisBatchOptions;
 };
+
+type QueuedBatchGame = {
+  game: AnalysisBatchGameInput;
+  originalIndex: number;
+  retryCount: number;
+};
+
+class BatchGameAttemptError extends Error {
+  stage: AnalysisBatchErrorStage;
+
+  constructor(stage: AnalysisBatchErrorStage, error: unknown, fallback: string) {
+    super(resolveErrorMessage(error, fallback));
+    this.name = 'BatchGameAttemptError';
+    this.stage = stage;
+  }
+}
 
 const pushBatchError = (
   batch: AnalysisBatchDocument,
@@ -28,6 +46,18 @@ const pushBatchError = (
     stage: params.stage,
     createdAt: new Date(),
   });
+};
+
+const resolveErrorStage = (error: unknown): AnalysisBatchErrorStage => {
+  if (error instanceof BatchGameAttemptError) {
+    return error.stage;
+  }
+
+  return error instanceof AppError ? 'technical_analysis' : 'unknown';
+};
+
+const resolveErrorMessage = (error: unknown, fallback: string): string => {
+  return error instanceof Error ? error.message : fallback;
 };
 
 const saveBatch = async (batch: AnalysisBatchDocument): Promise<void> => {
@@ -82,6 +112,105 @@ const handleAutomaticProfileUpdate = async (
   }
 };
 
+const processSingleBatchGame = async ({
+  batch,
+  batchId,
+  userId,
+  game,
+  index,
+  options,
+  stockfish,
+  profileSummary,
+}: {
+  batch: AnalysisBatchDocument;
+  batchId: string;
+  userId: string;
+  game: AnalysisBatchGameInput;
+  index: number;
+  options: AnalysisBatchOptions;
+  stockfish: ReturnType<typeof createStockfishClient>;
+  profileSummary: Awaited<ReturnType<typeof buildAgentOneProfileSummary>>;
+}): Promise<void> => {
+  const technicalResult = await analyzeSingleGamePgn(game, stockfish, index);
+  const analysis = technicalResult.analysis;
+  const targetPlayer = {
+    username: options.targetPlayer?.username,
+    platform: options.targetPlayer?.platform ?? 'unknown',
+    color: inferTargetPlayerColor(options.targetPlayer?.username, game.metadata),
+  } as const;
+
+  let aiReview;
+
+  if (options.includeAiReview) {
+    try {
+      aiReview = await requestSingleGameReview({
+        analysisType: 'profile_game_evidence',
+        gameId: game.id,
+        originalPgn: game.pgn,
+        annotatedPgn: analysis.annotatedPgn,
+        criticalMoments: analysis.criticalMoments,
+        moveClassifications: analysis.moveClassifications,
+        moveClassificationSummary: analysis.moveClassificationSummary,
+        accuracy: analysis.accuracy,
+        targetPlayer,
+        metadata: game.metadata,
+        profileSummary,
+      });
+    } catch (error) {
+      throw new BatchGameAttemptError(
+        'ai_review',
+        error,
+        'AI review failed during batch processing.',
+      );
+    }
+
+    if (!aiReview.success && aiReview.error) {
+      pushBatchError(batch, {
+        gameId: game.id,
+        message: aiReview.error,
+        stage: 'ai_review',
+      });
+    }
+  }
+
+  let savedAnalysis;
+
+  try {
+    savedAnalysis = await saveGameAnalysis({
+      userId,
+      batchId,
+      allowExistingNonBatch: true,
+      gameId: game.id,
+      source: options.source,
+      targetPlayer,
+      metadata: {
+        ...game.metadata,
+        timeControl: game.metadata?.timeControl ?? options.timeControl,
+      },
+      originalPgn: game.pgn,
+      technicalAnalysis: {
+        gameId: analysis.gameId,
+        annotatedPgn: analysis.annotatedPgn,
+        accuracy: analysis.accuracy,
+        moveClassificationSummary: analysis.moveClassificationSummary,
+        moveClassifications: analysis.moveClassifications,
+        criticalMoments: analysis.criticalMoments,
+      },
+      aiReview,
+      gameEvidenceSummary: aiReview?.gameEvidenceSummary,
+      structuredSummary: aiReview?.structuredSummary,
+    });
+  } catch (error) {
+    throw new BatchGameAttemptError(
+      'database_save',
+      error,
+      'Failed to save GameAnalysis document.',
+    );
+  }
+
+  batch.gameAnalysisIds.push(savedAnalysis._id);
+};
+
 export const processAnalysisBatch = async ({
   batchId,
   userId,
@@ -103,94 +232,61 @@ export const processAnalysisBatch = async ({
   try {
     await stockfish.start();
     const profileSummary = await buildAgentOneProfileSummary(userId);
+    const queue: QueuedBatchGame[] = games.map((game, originalIndex) => ({
+      game,
+      originalIndex,
+      retryCount: 0,
+    }));
 
-    for (const [index, game] of games.entries()) {
+    while (queue.length > 0) {
+      const queuedGame = queue.shift();
+
+      if (!queuedGame) {
+        continue;
+      }
+
       try {
-        const technicalResult = await analyzeSingleGamePgn(game, stockfish, index);
-        const analysis = technicalResult.analysis;
-        const targetPlayer = {
-          username: options.targetPlayer?.username,
-          platform: options.targetPlayer?.platform ?? 'unknown',
-          color: inferTargetPlayerColor(options.targetPlayer?.username, game.metadata),
-        } as const;
+        await processSingleBatchGame({
+          batch,
+          batchId,
+          userId,
+          game: queuedGame.game,
+          index: queuedGame.originalIndex,
+          options,
+          stockfish,
+          profileSummary,
+        });
 
-        let aiReview;
-
-        if (options.includeAiReview) {
-          aiReview = await requestSingleGameReview({
-            analysisType: 'profile_game_evidence',
-            gameId: game.id,
-            originalPgn: game.pgn,
-            annotatedPgn: analysis.annotatedPgn,
-            criticalMoments: analysis.criticalMoments,
-            moveClassifications: analysis.moveClassifications,
-            moveClassificationSummary: analysis.moveClassificationSummary,
-            accuracy: analysis.accuracy,
-            targetPlayer,
-            metadata: game.metadata,
-            profileSummary,
+        batch.processedGames += 1;
+        batch.successfulGames += 1;
+      } catch (error) {
+        if (queuedGame.retryCount < MAX_RETRIES_PER_GAME) {
+          queue.push({
+            ...queuedGame,
+            retryCount: queuedGame.retryCount + 1,
           });
 
-          if (!aiReview.success && aiReview.error) {
-            pushBatchError(batch, {
-              gameId: game.id,
-              message: aiReview.error,
-              stage: 'ai_review',
-            });
-          }
-        }
-
-        let savedAnalysis;
-
-        try {
-          savedAnalysis = await saveGameAnalysis({
-            userId,
+          console.warn('[analysis-batch] game failed; queued retry', {
             batchId,
-            allowExistingNonBatch: true,
-            gameId: game.id,
-            source: options.source,
-            targetPlayer,
-            metadata: {
-              ...game.metadata,
-              timeControl: game.metadata?.timeControl ?? options.timeControl,
-            },
-            originalPgn: game.pgn,
-            technicalAnalysis: {
-              gameId: analysis.gameId,
-              annotatedPgn: analysis.annotatedPgn,
-              accuracy: analysis.accuracy,
-              moveClassificationSummary: analysis.moveClassificationSummary,
-              moveClassifications: analysis.moveClassifications,
-              criticalMoments: analysis.criticalMoments,
-            },
-            aiReview,
-            gameEvidenceSummary: aiReview?.gameEvidenceSummary,
-            structuredSummary: aiReview?.structuredSummary,
+            gameId: queuedGame.game.id,
+            retryCount: queuedGame.retryCount + 1,
+            maxRetries: MAX_RETRIES_PER_GAME,
+            error: resolveErrorMessage(error, 'Game analysis failed.'),
           });
-        } catch (error) {
-          batch.processedGames += 1;
-          batch.failedGames += 1;
-          pushBatchError(batch, {
-            gameId: game.id,
-            message:
-              error instanceof Error ? error.message : 'Failed to save GameAnalysis document.',
-            stage: 'database_save',
-          });
+
           await saveBatch(batch);
           continue;
         }
 
-        batch.gameAnalysisIds.push(savedAnalysis._id);
-        batch.processedGames += 1;
-        batch.successfulGames += 1;
-      } catch (error) {
         batch.processedGames += 1;
         batch.failedGames += 1;
 
         pushBatchError(batch, {
-          gameId: game.id,
-          message: error instanceof Error ? error.message : 'Game analysis failed.',
-          stage: error instanceof AppError ? 'technical_analysis' : 'unknown',
+          gameId: queuedGame.game.id,
+          message: `${resolveErrorMessage(error, 'Game analysis failed.')} Failed after ${
+            MAX_RETRIES_PER_GAME + 1
+          } attempts.`,
+          stage: resolveErrorStage(error),
         });
       }
 

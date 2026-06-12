@@ -7,6 +7,7 @@ import {
   createCycle,
   getActiveCycle,
   getAvailableThemes,
+  getLeaderboards,
   submitAttempt,
 } from './pattern-forge.controller';
 
@@ -16,5 +17,6 @@ patternForgeRoutes.use(authenticate);
 patternForgeRoutes.post('/pattern-forge/cycles', asyncHandler(createCycle));
 patternForgeRoutes.get('/pattern-forge/cycles/active', asyncHandler(getActiveCycle));
 patternForgeRoutes.get('/pattern-forge/themes', asyncHandler(getAvailableThemes));
+patternForgeRoutes.get('/pattern-forge/leaderboards', asyncHandler(getLeaderboards));
 patternForgeRoutes.post('/pattern-forge/attempts', asyncHandler(submitAttempt));
 patternForgeRoutes.post('/pattern-forge/sessions/:sessionId/complete', asyncHandler(completeSession));

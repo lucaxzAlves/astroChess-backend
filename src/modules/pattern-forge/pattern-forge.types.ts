@@ -292,6 +292,38 @@ export type PatternForgeCalendarProgress = {
   roundCompletedAt: Date | null;
 };
 
+export type PatternForgeLeaderboardPeriod = 'daily' | 'monthly' | 'allTime';
+
+export type PatternForgeLeaderboardAchievement =
+  | 'puzzle_grinder'
+  | 'daily_streak'
+  | 'pattern_master'
+  | 'forge_veteran';
+
+export type PatternForgeLeaderboardEntry = {
+  id: string;
+  userId: string;
+  username: string;
+  avatar: string | null;
+  puzzlesSolved: number;
+  rank: number;
+  dailyPuzzles: number;
+  monthlyPuzzles: number;
+  allTimePuzzles: number;
+  achievements: PatternForgeLeaderboardAchievement[];
+};
+
+export type PatternForgeLeaderboardsResponse = {
+  success: true;
+  data: {
+    daily: PatternForgeLeaderboardEntry[];
+    monthly: PatternForgeLeaderboardEntry[];
+    allTime: PatternForgeLeaderboardEntry[];
+    currentUserId: string;
+    generatedAt: string;
+  };
+};
+
 export type ImportPuzzleCsvRow = {
   PuzzleId: string;
   FEN: string;

@@ -97,8 +97,6 @@ const playerProfileVersionSchema = new Schema<PlayerProfileVersionDocument>(
 
 playerProfileVersionSchema.index({ userId: 1, versionNumber: 1 }, { unique: true });
 playerProfileVersionSchema.index({ userId: 1, createdAt: -1 });
-playerProfileVersionSchema.index({ batchId: 1 });
-playerProfileVersionSchema.index({ profileId: 1 });
 
 export const PlayerProfileVersion: Model<PlayerProfileVersionDocument> =
   models.PlayerProfileVersion ??

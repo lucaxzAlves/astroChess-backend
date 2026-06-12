@@ -56,5 +56,6 @@ export const updateMyChessComUsername = async (
   return response.status(200).json({
     message: 'Chess.com username saved successfully.',
     chessCom: profile.identities?.chessCom ?? null,
+    profile,
   });
 };

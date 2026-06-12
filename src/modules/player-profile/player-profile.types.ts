@@ -406,6 +406,7 @@ export type ImprovementHistoryEntry = {
 export type PlayerIdentities = {
   chessCom?: {
     username?: string;
+    avatarUrl?: string;
     lastSyncedAt?: Date;
   };
   lichess?: {

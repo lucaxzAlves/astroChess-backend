@@ -50,12 +50,5 @@ const academyPathSchema = new Schema<AcademyPathDocument>(
   { timestamps: true },
 );
 
-academyPathSchema.index({ slug: 1 }, { unique: true });
-academyPathSchema.index({ status: 1 });
-academyPathSchema.index({ category: 1 });
-academyPathSchema.index({ level: 1 });
-academyPathSchema.index({ order: 1 });
-
 export const AcademyPath: Model<AcademyPathDocument> =
   models.AcademyPath ?? model<AcademyPathDocument>('AcademyPath', academyPathSchema);
-

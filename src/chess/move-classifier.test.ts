@@ -158,6 +158,24 @@ describe('move classification by expected points loss', () => {
     assert.ok(result.reasonTags.includes('missed_forced_mate'));
   });
 
+  it('does not classify a delivered checkmate as a blunder', () => {
+    const result = classifyMove({
+      ...baseInput,
+      moveNumber: 2,
+      color: 'black',
+      playedMoveUci: 'd8h4',
+      bestMoveUci: 'd8h4',
+      bestMoveSan: 'Qh4#',
+      before: mate(1),
+      after: mate(-1),
+      fenAfter: 'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3',
+    });
+
+    assert.notEqual(result.classification, 'blunder');
+    assert.equal(result.classification, 'best');
+    assert.ok(result.reasonTags.includes('delivered_checkmate'));
+  });
+
   it('marks a near-best but difficult move as great', () => {
     const result = classifyMove({
       ...baseInput,

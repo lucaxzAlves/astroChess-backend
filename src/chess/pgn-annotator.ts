@@ -40,6 +40,21 @@ const formatLichessEval = (evaluation: NormalizedEvaluation): string => {
   return (evaluation.evaluation / 100).toFixed(2);
 };
 
+const extractClockAnnotationsByPly = (pgn: string): Map<number, string> => {
+  const clockByPly = new Map<number, string>();
+  const clockMatches = [...pgn.matchAll(/\[%clk\s+([^\]]+)\]/gi)];
+
+  clockMatches.forEach((match, index) => {
+    const clockValue = match[1]?.trim();
+
+    if (clockValue) {
+      clockByPly.set(index + 1, `[%clk ${clockValue}]`);
+    }
+  });
+
+  return clockByPly;
+};
+
 const getColorToMoveFromFen = (fen: string): 'white' | 'black' => {
   return fen.split(' ')[1] === 'w' ? 'white' : 'black';
 };
@@ -143,6 +158,7 @@ export const toSanVariationFromUci = (
 export const buildAnnotatedPgn = (game: ParsedGame, moves: AnalyzedMove[]): string => {
   const headers = buildHeaders(game);
   const bodyParts: string[] = [];
+  const clockAnnotationsByPly = extractClockAnnotationsByPly(game.pgn);
 
   for (const move of moves) {
     if (move.color === 'white') {
@@ -153,6 +169,8 @@ export const buildAnnotatedPgn = (game: ParsedGame, moves: AnalyzedMove[]): stri
 
     const moveText = `${move.san}${move.symbol}`;
     const lichessEval = `[%eval ${formatLichessEval(move.normalizedAfter)}]`;
+    const clockAnnotation = clockAnnotationsByPly.get(move.ply);
+    const structuredAnnotations = [lichessEval, clockAnnotation].filter(Boolean).join(' ');
 
     bodyParts.push(moveText);
 
@@ -163,7 +181,7 @@ export const buildAnnotatedPgn = (game: ParsedGame, moves: AnalyzedMove[]): stri
       const variation = move.shouldIncludePv ? formatVariation(move.fenBefore, move.pv) : undefined;
 
       bodyParts.push(`{ ${evalComment} }`);
-      bodyParts.push(`{ ${lichessEval} }`);
+      bodyParts.push(`{ ${structuredAnnotations} }`);
 
       if (variation) {
         bodyParts.push(variation);
@@ -172,7 +190,7 @@ export const buildAnnotatedPgn = (game: ParsedGame, moves: AnalyzedMove[]): stri
       continue;
     }
 
-    bodyParts.push(`{ ${lichessEval} }`);
+    bodyParts.push(`{ ${structuredAnnotations} }`);
   }
 
   const result = game.metadata?.result ?? game.headers.Result ?? '*';

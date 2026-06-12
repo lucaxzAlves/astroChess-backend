@@ -90,6 +90,18 @@ const formatComment = (classification: MoveClassification, bestMoveSan?: string)
   return `${MOVE_CLASSIFICATION_LABELS[classification]}.${formatBestMoveSuffix(bestMoveSan)}`.trim();
 };
 
+const isCheckmateFen = (fen?: string): boolean => {
+  if (!fen) {
+    return false;
+  }
+
+  try {
+    return new Chess(fen).isCheckmate();
+  } catch {
+    return false;
+  }
+};
+
 export const evaluationFromPlayerPerspective = (
   evaluation: NormalizedEvaluation,
   color: PlayerColor,
@@ -464,6 +476,7 @@ export const classifyMove = ({
     });
   const isSacrifice =
     resolvedSacrificeSignal.acceptedSacrifice || resolvedSacrificeSignal.offeredSacrifice;
+  const deliveredCheckmate = isCheckmateFen(fenAfter);
   const baseClassification = getBaseClassificationForExpectedLoss(
     expectedPointsLoss,
     isBestLikeMove,
@@ -595,6 +608,44 @@ export const classifyMove = ({
         }),
       );
     }
+  }
+
+  if (
+    deliveredCheckmate ||
+    (after.evaluationType === 'mate' && evaluationFromPlayerPerspective(after, color) > 0)
+  ) {
+    return createMoveResult(
+      playedMoveUci === bestMoveUci || expectedPointsLoss <= EXPECTED_POINTS_THRESHOLDS.excellent
+        ? 'best'
+        : 'excellent',
+      '',
+      null,
+      expectedBefore,
+      expectedAfter,
+      expectedPointsLoss,
+      centipawnLoss,
+      { ...baseFlags, isCritical: true },
+      bestMoveSan,
+      false,
+      [
+        ...reasonTags,
+        deliveredCheckmate
+          ? 'delivered_checkmate'
+          : playedMoveUci === bestMoveUci
+            ? 'delivered_forced_mate'
+            : 'winning_mate_sequence',
+      ],
+      undefined,
+      createDebugPayload(enableClassificationDebug, {
+        ...debugBase,
+        evalLoss: null,
+        reason: deliveredCheckmate
+          ? 'delivered_checkmate'
+          : playedMoveUci === bestMoveUci
+            ? 'delivered_forced_mate'
+            : 'winning_mate_sequence',
+      }),
+    );
   }
 
   if (after.evaluationType === 'mate' && evaluationFromPlayerPerspective(after, color) < 0) {

@@ -189,11 +189,6 @@ const academyLessonSchema = new Schema<AcademyLessonDocument>(
 
 academyLessonSchema.index({ moduleId: 1, order: 1 });
 academyLessonSchema.index({ moduleId: 1, slug: 1 }, { unique: true });
-academyLessonSchema.index({ pathId: 1 });
-academyLessonSchema.index({ status: 1 });
-academyLessonSchema.index({ tags: 1 });
-academyLessonSchema.index({ keyConcepts: 1 });
 
 export const AcademyLesson: Model<AcademyLessonDocument> =
   models.AcademyLesson ?? model<AcademyLessonDocument>('AcademyLesson', academyLessonSchema);
-

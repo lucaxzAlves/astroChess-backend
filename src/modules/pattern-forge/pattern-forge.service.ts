@@ -4,6 +4,8 @@ import readline from 'node:readline';
 import type { AnyBulkWriteOperation } from 'mongoose';
 import { Types } from 'mongoose';
 
+import { PlayerProfile } from '../../models/PlayerProfile';
+import { User } from '../../models/User';
 import { AppError } from '../../utils/AppError';
 import { getPlayerProfile } from '../player-profile/player-profile.service';
 import type { PlayerProfileDocument } from '../player-profile/player-profile.types';
@@ -25,6 +27,9 @@ import type {
   PatternForgeCycleDocument,
   PatternForgeDerivedThemes,
   PatternForgeDailySessionDocument,
+  PatternForgeLeaderboardAchievement,
+  PatternForgeLeaderboardEntry,
+  PatternForgeLeaderboardsResponse,
   PatternForgePuzzlePublic,
   PatternForgeRoundPlan,
   PatternForgeThemeKey,
@@ -1192,6 +1197,246 @@ export const getActivePatternForgeCycle = async (userId: string, username?: stri
     puzzles,
     themeReasons,
     calendarProgress,
+  };
+};
+
+type LeaderboardCountRow = {
+  _id: Types.ObjectId;
+  puzzlesSolved: number;
+};
+
+type LeaderboardCountMaps = {
+  daily: Map<string, number>;
+  monthly: Map<string, number>;
+  allTime: Map<string, number>;
+};
+
+const getStartOfToday = (): Date => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+};
+
+const getStartOfMonth = (): Date => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+};
+
+const getSolvedPuzzleCountsSince = async (since?: Date): Promise<Map<string, number>> => {
+  const match: Record<string, unknown> = {
+    isCorrect: true,
+    isComplete: true,
+  };
+
+  if (since) {
+    match.createdAt = { $gte: since };
+  }
+
+  const rows = await PatternForgeAttempt.aggregate<LeaderboardCountRow>([
+    { $match: match },
+    {
+      $group: {
+        _id: '$userId',
+        puzzlesSolved: { $sum: 1 },
+      },
+    },
+  ]).exec();
+
+  return new Map(rows.map((row) => [row._id.toString(), row.puzzlesSolved]));
+};
+
+const getLatestCycleUsernameMap = async (userIds: string[]): Promise<Map<string, string>> => {
+  if (!userIds.length) {
+    return new Map();
+  }
+
+  const cycles = await PatternForgeCycle.find({
+    userId: { $in: userIds.map((id) => ensureObjectId(id, 'user id')) },
+  })
+    .sort({ updatedAt: -1 })
+    .select({ userId: 1, username: 1 })
+    .lean()
+    .exec();
+
+  const usernameMap = new Map<string, string>();
+
+  cycles.forEach((cycle) => {
+    const key = cycle.userId.toString();
+    if (!usernameMap.has(key) && typeof cycle.username === 'string' && cycle.username.trim()) {
+      usernameMap.set(key, cycle.username.trim());
+    }
+  });
+
+  return usernameMap;
+};
+
+const getChessComAvatarMap = async (userIds: string[]): Promise<Map<string, string>> => {
+  if (!userIds.length) {
+    return new Map();
+  }
+
+  const profiles = await PlayerProfile.find({
+    userId: { $in: userIds.map((id) => ensureObjectId(id, 'user id')) },
+  })
+    .select({ userId: 1, 'identities.chessCom.avatarUrl': 1 })
+    .lean()
+    .exec();
+
+  const avatarMap = new Map<string, string>();
+
+  profiles.forEach((profile) => {
+    const avatarUrl = profile.identities?.chessCom?.avatarUrl;
+    if (typeof avatarUrl === 'string' && avatarUrl.trim()) {
+      avatarMap.set(profile.userId.toString(), avatarUrl.trim());
+    }
+  });
+
+  return avatarMap;
+};
+
+const buildLeaderboardAchievements = (counts: {
+  daily: number;
+  monthly: number;
+  allTime: number;
+}): PatternForgeLeaderboardAchievement[] => {
+  const achievements = new Set<PatternForgeLeaderboardAchievement>();
+
+  if (counts.monthly >= 250) achievements.add('puzzle_grinder');
+  if (counts.daily >= 20) achievements.add('daily_streak');
+  if (counts.allTime >= 1000) achievements.add('pattern_master');
+  if (counts.allTime >= 250) achievements.add('forge_veteran');
+
+  return [...achievements];
+};
+
+const buildLeaderboardForPeriod = (params: {
+  period: keyof LeaderboardCountMaps;
+  countMaps: LeaderboardCountMaps;
+  usernameMap: Map<string, string>;
+  userNameMap: Map<string, string>;
+  avatarMap: Map<string, string>;
+  currentUserId: string;
+  limit: number;
+}): PatternForgeLeaderboardEntry[] => {
+  const userIds = new Set<string>([
+    ...params.countMaps.daily.keys(),
+    ...params.countMaps.monthly.keys(),
+    ...params.countMaps.allTime.keys(),
+    params.currentUserId,
+  ]);
+
+  const rankedEntries = [...userIds]
+    .map((userId) => {
+      const daily = params.countMaps.daily.get(userId) ?? 0;
+      const monthly = params.countMaps.monthly.get(userId) ?? 0;
+      const allTime = params.countMaps.allTime.get(userId) ?? 0;
+      const counts = { daily, monthly, allTime };
+      const puzzlesSolved = counts[params.period];
+      const username =
+        params.usernameMap.get(userId) ??
+        params.userNameMap.get(userId) ??
+        `Player ${userId.slice(-4)}`;
+
+      return {
+        id: userId,
+        userId,
+        username,
+        avatar: params.avatarMap.get(userId) ?? null,
+        puzzlesSolved,
+        rank: 0,
+        dailyPuzzles: daily,
+        monthlyPuzzles: monthly,
+        allTimePuzzles: allTime,
+        achievements: buildLeaderboardAchievements(counts),
+      };
+    })
+    .sort((left, right) => {
+      if (right.puzzlesSolved !== left.puzzlesSolved) {
+        return right.puzzlesSolved - left.puzzlesSolved;
+      }
+
+      return left.username.localeCompare(right.username);
+    })
+    .map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+    }));
+
+  const visibleEntries = rankedEntries.slice(0, params.limit);
+  const currentUserEntry = rankedEntries.find((entry) => entry.userId === params.currentUserId);
+
+  if (
+    currentUserEntry &&
+    !visibleEntries.some((entry) => entry.userId === params.currentUserId)
+  ) {
+    visibleEntries.push(currentUserEntry);
+  }
+
+  return visibleEntries;
+};
+
+export const getPatternForgeLeaderboards = async (
+  userId: string,
+  limit = 50,
+): Promise<PatternForgeLeaderboardsResponse> => {
+  const currentUserId = ensureObjectId(userId, 'user id').toString();
+  const safeLimit = Math.max(3, Math.min(100, Math.floor(limit)));
+  const [daily, monthly, allTime] = await Promise.all([
+    getSolvedPuzzleCountsSince(getStartOfToday()),
+    getSolvedPuzzleCountsSince(getStartOfMonth()),
+    getSolvedPuzzleCountsSince(),
+  ]);
+  const allUserIds = [
+    ...new Set([
+      ...daily.keys(),
+      ...monthly.keys(),
+      ...allTime.keys(),
+      currentUserId,
+    ]),
+  ];
+  const [users, usernameMap, avatarMap] = await Promise.all([
+    User.find({ _id: { $in: allUserIds.map((id) => ensureObjectId(id, 'user id')) } })
+      .select({ name: 1 })
+      .lean()
+      .exec(),
+    getLatestCycleUsernameMap(allUserIds),
+    getChessComAvatarMap(allUserIds),
+  ]);
+  const userNameMap = new Map(users.map((user) => [user._id.toString(), user.name]));
+  const countMaps = { daily, monthly, allTime };
+
+  return {
+    success: true,
+    data: {
+      daily: buildLeaderboardForPeriod({
+        period: 'daily',
+        countMaps,
+        usernameMap,
+        userNameMap,
+        avatarMap,
+        currentUserId,
+        limit: safeLimit,
+      }),
+      monthly: buildLeaderboardForPeriod({
+        period: 'monthly',
+        countMaps,
+        usernameMap,
+        userNameMap,
+        avatarMap,
+        currentUserId,
+        limit: safeLimit,
+      }),
+      allTime: buildLeaderboardForPeriod({
+        period: 'allTime',
+        countMaps,
+        usernameMap,
+        userNameMap,
+        avatarMap,
+        currentUserId,
+        limit: safeLimit,
+      }),
+      currentUserId,
+      generatedAt: new Date().toISOString(),
+    },
   };
 };
 

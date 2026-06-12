@@ -7,6 +7,7 @@ import {
   createPatternForgeCycle,
   getActivePatternForgeCycle,
   getAvailablePatternForgeThemes,
+  getPatternForgeLeaderboards,
   submitPatternForgeAttempt,
 } from './pattern-forge.service';
 
@@ -37,6 +38,16 @@ export const getAvailableThemes = async (
   response: Response,
 ): Promise<Response> => {
   const result = await getAvailablePatternForgeThemes();
+  return response.status(200).json(result);
+};
+
+export const getLeaderboards = async (
+  request: Request,
+  response: Response,
+): Promise<Response> => {
+  const limit =
+    typeof request.query.limit === 'string' ? Number.parseInt(request.query.limit, 10) : 50;
+  const result = await getPatternForgeLeaderboards(getAuthenticatedUserId(request), limit);
   return response.status(200).json(result);
 };
 

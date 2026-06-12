@@ -38,8 +38,6 @@ const academyModuleSchema = new Schema<AcademyModuleDocument>(
 
 academyModuleSchema.index({ pathId: 1, order: 1 });
 academyModuleSchema.index({ pathId: 1, slug: 1 }, { unique: true });
-academyModuleSchema.index({ status: 1 });
 
 export const AcademyModule: Model<AcademyModuleDocument> =
   models.AcademyModule ?? model<AcademyModuleDocument>('AcademyModule', academyModuleSchema);
-
