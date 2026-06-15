@@ -1074,19 +1074,46 @@ const buildTodaySessionResponse = async (cycle: PatternForgeCycleDocument) => {
   };
 };
 
+const deleteActivePatternForgeCyclesForUser = async (
+  userId: string,
+  username: string,
+): Promise<void> => {
+  const userObjectId = ensureObjectId(userId, 'user id');
+  const activeCycles = await PatternForgeCycle.find({
+    userId: userObjectId,
+    username,
+    status: 'active',
+  })
+    .select({ _id: 1 })
+    .lean()
+    .exec();
+
+  const activeCycleIds = activeCycles.map((cycle) => cycle._id);
+
+  if (activeCycleIds.length === 0) {
+    return;
+  }
+
+  await PatternForgeAttempt.deleteMany({
+    userId: userObjectId,
+    cycleId: { $in: activeCycleIds },
+  }).exec();
+
+  await PatternForgeDailySession.deleteMany({
+    userId: userObjectId,
+    cycleId: { $in: activeCycleIds },
+  }).exec();
+
+  await PatternForgeCycle.deleteMany({
+    userId: userObjectId,
+    _id: { $in: activeCycleIds },
+  }).exec();
+};
+
 export const createPatternForgeCycle = async (userId: string, body: unknown) => {
   const { username, config } = validateCreateCycleBody(body);
   const playerProfile = await getPlayerProfile(userId);
   const resolvedUsername = getAuthenticatedUsernameFallback(username, playerProfile);
-  const existingActiveCycle = await PatternForgeCycle.findOne({
-    userId: ensureObjectId(userId, 'user id'),
-    username: resolvedUsername,
-    status: 'active',
-  }).exec();
-
-  if (existingActiveCycle) {
-    throw new AppError('An active Pattern Forge cycle already exists for this username.', 409);
-  }
 
   const generatedSet = await generatePatternForgePuzzleSet({
     userId,
@@ -1099,6 +1126,8 @@ export const createPatternForgeCycle = async (userId: string, body: unknown) => 
     maxRating: config.maxRating,
     playerProfile,
   });
+
+  await deleteActivePatternForgeCyclesForUser(userId, resolvedUsername);
 
   const firstRound = config.rounds[0];
   const timezone = sanitizeTimezone(config.timezone);
