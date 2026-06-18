@@ -31,6 +31,7 @@ const patternForgeAttemptSchema = new Schema<PatternForgeAttemptDocument>(
 );
 
 patternForgeAttemptSchema.index({ cycleId: 1, sessionId: 1, puzzleId: 1, createdAt: -1 });
+patternForgeAttemptSchema.index({ isCorrect: 1, isComplete: 1, createdAt: -1, userId: 1 });
 
 export const PatternForgeAttempt: Model<PatternForgeAttemptDocument> =
   models.PatternForgeAttempt ??

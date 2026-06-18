@@ -1094,11 +1094,6 @@ const deleteActivePatternForgeCyclesForUser = async (
     return;
   }
 
-  await PatternForgeAttempt.deleteMany({
-    userId: userObjectId,
-    cycleId: { $in: activeCycleIds },
-  }).exec();
-
   await PatternForgeDailySession.deleteMany({
     userId: userObjectId,
     cycleId: { $in: activeCycleIds },
